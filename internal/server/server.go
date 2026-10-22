@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"net/http"
 	"path/filepath"
@@ -24,8 +25,10 @@ type Options struct {
 	Addr   string
 	TLS    TLSConfig
 	Runner *jobs.Runner
-	// Store is the runner's file store. Plan 04 closes it on shutdown.
-	Store  *jobs.FileStore
+	// Store is the runner's file store, closed by Serve as its last step so
+	// the instance lock file does not outlive the process (FORK-WR-03). Nil
+	// means nothing to close.
+	Store  io.Closer
 	Logger *slog.Logger
 }
 
@@ -33,6 +36,7 @@ type Options struct {
 type Server struct {
 	srv    *http.Server
 	runner *jobs.Runner
+	store  io.Closer
 	log    *slog.Logger
 }
 
@@ -51,7 +55,7 @@ func New(o Options) (*Server, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &Server{srv: srv, runner: o.Runner, log: log.With("component", "server")}, nil
+	return &Server{srv: srv, runner: o.Runner, store: o.Store, log: log.With("component", "server")}, nil
 }
 
 // OptionsFromConfig builds the store and the runner for cfg, in the order the
@@ -109,35 +113,67 @@ func (s *Server) Handler() http.Handler { return s.srv.Handler }
 // of their own).
 func (s *Server) HTTPServer() *http.Server { return s.srv }
 
-// Serve listens and serves until ctx is cancelled, then stops accepting
-// connections, waits for requests to end and stops the runner, which stops a
-// running engine (its whole process group) and fails queued jobs; their records
-// are written before Serve returns, so a client polling a job sees it end.
+// Serve listens and serves until ctx is cancelled, then shuts down in an order
+// that leaves every admitted deploy on record (PD-18, FORK-WR-01):
+//
+//  1. the HTTP server starts to shut down in the background: listeners close at
+//     once, requests in flight (a wait:true deploy among them) carry on;
+//  2. the runner shuts down: it refuses new jobs, cancels its context, which
+//     stops a running engine (its whole process group) and fails queued jobs,
+//     and waits until every admitted job, wait:true included, has written its
+//     final record;
+//  3. Serve waits for the HTTP shutdown, so each answer has been written;
+//  4. the store is closed, which removes the instance lock file (FORK-WR-03).
+//
+// Under systemd TimeoutStopSec=60 this fits: steps 1 to 3 are bounded by
+// shutdownGrace together.
 func (s *Server) Serve(ctx context.Context) error {
 	errc := make(chan error, 1)
 	go func() { errc <- s.srv.ListenAndServeTLS("", "") }()
-	select {
-	case err := <-errc: // the listener failed (address in use, ...)
-		_ = s.runner.Shutdown(shutdownGrace)
-		return err
-	case <-ctx.Done():
-	}
-	s.log.Info("shutting down")
-	sctx, cancel := context.WithTimeout(context.Background(), shutdownGrace)
-	defer cancel()
 	var first error
-	if err := s.srv.Shutdown(sctx); err != nil {
-		s.log.Error("shutdown", "error", err.Error())
-		first = err
-	}
-	if err := <-errc; err != nil && !errors.Is(err, http.ErrServerClosed) {
-		first = err
-	}
-	if err := s.runner.Shutdown(shutdownGrace); err != nil {
-		s.log.Error("runner shutdown", "error", err.Error())
-		if first == nil {
+	keep := func(err error) {
+		if first == nil && err != nil {
 			first = err
 		}
 	}
+	select {
+	case err := <-errc: // the listener failed (address in use, ...)
+		keep(err)
+		keep(s.runner.Shutdown(shutdownGrace))
+		keep(s.closeStore())
+		return first
+	case <-ctx.Done():
+	}
+	s.log.Info("shutting down")
+	httpDone := make(chan error, 1)
+	go func() {
+		sctx, cancel := context.WithTimeout(context.Background(), shutdownGrace)
+		defer cancel()
+		httpDone <- s.srv.Shutdown(sctx)
+	}()
+	if err := s.runner.Shutdown(shutdownGrace); err != nil {
+		s.log.Error("runner shutdown", "error", err.Error())
+		keep(err)
+	}
+	if err := <-httpDone; err != nil {
+		s.log.Error("shutdown", "error", err.Error())
+		keep(err)
+		_ = s.srv.Close() // drop what the grace period could not drain
+	}
+	if err := <-errc; err != nil && !errors.Is(err, http.ErrServerClosed) {
+		keep(err)
+	}
+	keep(s.closeStore())
 	return first
+}
+
+func (s *Server) closeStore() error {
+	if s.store == nil {
+		return nil
+	}
+	if err := s.store.Close(); err != nil {
+		s.log.Error("closing the job store", "error", err.Error())
+		return err
+	}
+	return nil
 }

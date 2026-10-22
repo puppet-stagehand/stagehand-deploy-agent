@@ -114,7 +114,7 @@ type Runner struct {
 
 	ctx    context.Context // base context for every job
 	cancel context.CancelFunc
-	wg     sync.WaitGroup // background jobs
+	wg     sync.WaitGroup // admitted jobs, counted in reserve, released in release
 
 	pendMu  sync.Mutex
 	pending int
@@ -147,7 +147,11 @@ func NewRunner(opts Options) (*Runner, error) {
 	return &Runner{opts: opts, log: logger.With("component", "runner"), lock: NewDeployLock(opts.LockPath), ctx: ctx, cancel: cancel}, nil
 }
 
-// reserve counts one more pending job, or refuses it.
+// reserve admits one more job, or refuses it. Admission and the wait-group
+// count are one step under pendMu, the lock Shutdown takes to set closed, so a
+// Shutdown that has begun to Wait can never miss a job that was let in, and a
+// job refused as shutting down was never counted (FORK-WR-02). Whoever gets nil
+// must call release exactly once when the job is on record as finished.
 func (r *Runner) reserve() error {
 	r.pendMu.Lock()
 	defer r.pendMu.Unlock()
@@ -158,13 +162,17 @@ func (r *Runner) reserve() error {
 		return ErrBusy
 	}
 	r.pending++
+	r.wg.Add(1)
 	return nil
 }
 
+// release ends an admission made by reserve: the job no longer counts as
+// pending, and Shutdown stops waiting for it.
 func (r *Runner) release() {
 	r.pendMu.Lock()
 	r.pending--
 	r.pendMu.Unlock()
+	r.wg.Done()
 }
 
 // Start runs job in the background on the runner's base context and returns
@@ -176,9 +184,7 @@ func (r *Runner) Start(job Job) error {
 	// The goroutine owns its own copy: the caller still encodes job (the
 	// 202 answer) while the runner rewrites its results.
 	job = job.clone()
-	r.wg.Add(1)
 	go func() {
-		defer r.wg.Done()
 		defer r.release()
 		if _, err := r.Run(r.ctx, job); err != nil {
 			r.log.Error("deploy failed to record", "job_id", job.ID, "error", err.Error())
@@ -189,7 +195,8 @@ func (r *Runner) Start(job Job) error {
 
 // RunSync runs job on the runner's base context and waits for it. It is not
 // tied to any request: a client that hangs up must not stop an engine half way
-// through an environment. deploys.timeout still bounds every invocation.
+// through an environment. deploys.timeout still bounds every invocation. It
+// counts as a pending job, so Shutdown waits for its record (FORK-WR-01).
 func (r *Runner) RunSync(job Job) (Job, error) {
 	if err := r.reserve(); err != nil {
 		return job, err
@@ -199,8 +206,9 @@ func (r *Runner) RunSync(job Job) (Job, error) {
 }
 
 // Shutdown stops accepting jobs, cancels the base context (stopping any
-// running engine and failing queued jobs) and waits up to timeout for
-// background jobs to record their outcome.
+// running engine and failing queued jobs) and waits up to timeout for every
+// admitted job, background (Start) or synchronous (RunSync), to record its
+// outcome.
 func (r *Runner) Shutdown(timeout time.Duration) error {
 	r.pendMu.Lock()
 	r.closed = true
