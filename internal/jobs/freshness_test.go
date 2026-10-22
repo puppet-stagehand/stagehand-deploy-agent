@@ -62,3 +62,54 @@ func TestBackToBackDeploysSameSecondSucceed(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestMarkerSnapshotRewritten(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, ".r10k-deploy.json")
+	t0 := time.Date(2026, 10, 22, 12, 0, 0, 0, time.UTC)
+	write := func(content string, mtime time.Time) {
+		t.Helper()
+		if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Chtimes(path, mtime, mtime); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	absent := SnapshotMarker(path)
+	if absent.Exists {
+		t.Fatal("a missing file has a snapshot that exists")
+	}
+	write("a", t0)
+	before := SnapshotMarker(path)
+	if !before.Exists || before.ModTime.IsZero() || string(before.Bytes) != "a" {
+		t.Fatalf("snapshot = %+v", before)
+	}
+
+	cases := []struct {
+		name  string
+		setup func()
+		want  bool
+	}{
+		{"untouched", func() {}, false},
+		{"same bytes, same mtime written again", func() { write("a", t0) }, false}, // indistinguishable from untouched
+		{"same bytes, mtime one nanosecond later", func() { write("a", t0.Add(time.Nanosecond)) }, true},
+		{"new bytes, same mtime", func() { write("b", t0) }, true},
+		{"removed", func() { os.Remove(path) }, true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			write("a", t0)
+			tc.setup()
+			if got := before.Rewritten(SnapshotMarker(path)); got != tc.want {
+				t.Fatalf("Rewritten = %v, want %v", got, tc.want)
+			}
+		})
+	}
+	// Nothing before the run: whatever is there afterwards was written by it.
+	write("a", t0)
+	if !absent.Rewritten(SnapshotMarker(path)) {
+		t.Fatal("a marker that did not exist before the run reads as not rewritten")
+	}
+}

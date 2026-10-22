@@ -1,9 +1,11 @@
 package jobs
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"os"
 	"time"
@@ -56,6 +58,48 @@ func ReadMarker(path string) (*Marker, error) {
 		return nil, fmt.Errorf("parse %s: %w", path, err)
 	}
 	return &m, nil
+}
+
+// MarkerSnapshot is a marker file as it was at one moment: whether it existed,
+// its modification time (to the nanosecond) and its bytes. Taken before an
+// engine runs and again after, it shows whether the engine wrote the file
+// during that run, which a marker's own timestamps cannot: r10k writes whole
+// seconds, so two deploys can share a second (FORK-IN-04, PD-19).
+type MarkerSnapshot struct {
+	Exists  bool
+	ModTime time.Time
+	Bytes   []byte
+}
+
+// SnapshotMarker reads the marker file at path. A missing or unreadable file
+// is a snapshot with Exists false; ReadMarker reports an unreadable file when
+// the verdict needs the marker.
+func SnapshotMarker(path string) MarkerSnapshot {
+	f, err := os.Open(path)
+	if err != nil {
+		return MarkerSnapshot{}
+	}
+	defer f.Close()
+	fi, err := f.Stat()
+	if err != nil {
+		return MarkerSnapshot{}
+	}
+	b, err := io.ReadAll(f)
+	if err != nil {
+		return MarkerSnapshot{}
+	}
+	return MarkerSnapshot{Exists: true, ModTime: fi.ModTime(), Bytes: b}
+}
+
+// Rewritten reports whether the file was written between s and after. It was
+// not only when it existed in both and neither its modification time nor its
+// bytes changed. A file that did not exist in s, or is gone in after, counts
+// as written: the verdict for those cases ("no deploy marker") is Normalize's.
+func (s MarkerSnapshot) Rewritten(after MarkerSnapshot) bool {
+	if !s.Exists || !after.Exists {
+		return true
+	}
+	return !s.ModTime.Equal(after.ModTime) || !bytes.Equal(s.Bytes, after.Bytes)
 }
 
 // Normalize decides whether one environment was deployed, the same way for

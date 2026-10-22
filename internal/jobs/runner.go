@@ -350,6 +350,10 @@ func (r *Runner) deployOne(ctx context.Context, res EnvResult) EnvResult {
 		res.State, res.ExitCode, res.Error = StateFailed, -1, "engine command is empty"
 		return res
 	}
+	markerPath := filepath.Join(r.opts.Basedir, res.Environment, r.opts.Engine.MarkerFile)
+	// What the marker was before the engine ran, so a success can be tied to a
+	// marker this run wrote (FORK-IN-04, PD-19).
+	markerBefore := SnapshotMarker(markerPath)
 	ctx, cancel := context.WithTimeout(ctx, r.opts.Timeout)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, argv[0], argv[1:]...)
@@ -394,7 +398,8 @@ func (r *Runner) deployOne(ctx context.Context, res EnvResult) EnvResult {
 		return res
 	}
 
-	marker, err := ReadMarker(filepath.Join(r.opts.Basedir, res.Environment, r.opts.Engine.MarkerFile))
+	markerAfter := SnapshotMarker(markerPath)
+	marker, err := ReadMarker(markerPath)
 	if err != nil {
 		res.State, res.Error = StateFailed, "deploy marker unreadable: "+err.Error()
 		return res
@@ -404,6 +409,13 @@ func (r *Runner) deployOne(ctx context.Context, res EnvResult) EnvResult {
 		res.MarkerDeploySuccess = marker.DeploySuccess != nil && *marker.DeploySuccess
 	}
 	res.State, res.DeployedSHA, res.Error = Normalize(res.ExitCode, marker, res.StartedAt, res.ExpectedSHA)
+	// Normalize lets a marker finished in the job's own second count as fresh
+	// (r10k writes whole seconds). A marker an earlier run left, byte for byte
+	// and to the nanosecond as it was before this engine started, is not this
+	// run's work, whatever its finished_at says: never "deployed" from it.
+	if res.State == StateDeployed && !markerBefore.Rewritten(markerAfter) {
+		res.State, res.DeployedSHA, res.Error = StateFailed, "", "the engine did not rewrite the deploy marker"
+	}
 	if res.ExitCode != 0 {
 		if tail := summariseStderr(errTail.snapshot()); tail != "" {
 			res.Error += ": " + tail
