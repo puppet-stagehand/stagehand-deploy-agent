@@ -40,6 +40,9 @@ const DefaultPath = "/etc/stagehand-deploy-agent/config.yml"
 // DefaultWebhookPort, so no estate setting changes (PD-03).
 const DefaultPort = 8088
 
+// DefaultR10kConfig is the tool's own configuration file when none is set.
+const DefaultR10kConfig = "/etc/puppetlabs/r10k/r10k.yaml"
+
 // DefaultOpsListen is where the plain-HTTP ops listener binds (D-05).
 const DefaultOpsListen = "127.0.0.1:8089"
 
@@ -221,7 +224,7 @@ func (c *Config) applyDefaults(has func(string) bool) {
 		c.Engine.CommandPath = "/opt/puppetlabs/puppet/bin/r10k"
 	}
 	if c.Engine.ConfigPath == "" {
-		c.Engine.ConfigPath = "/etc/puppetlabs/r10k/r10k.yaml"
+		c.Engine.ConfigPath = DefaultR10kConfig
 	}
 	// Upstream's defaults for these three are true.
 	if c.Engine.Verbose == nil {

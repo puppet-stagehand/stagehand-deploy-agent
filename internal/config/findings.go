@@ -45,17 +45,19 @@ func HasErrors(fs []Finding) bool {
 	return false
 }
 
-// dedupe drops a repeated (level, key) pair, keeping the first: a decode error
+// dedupe drops a repeated ERROR for one key, keeping the first: a decode error
 // and the validation of the zero value it left behind name the same key.
+// WARNINGs are never merged; several may share a key.
 func dedupe(fs []Finding) []Finding {
 	seen := map[string]bool{}
 	var out []Finding
 	for _, f := range fs {
-		k := f.Level + "\x00" + f.Key
-		if seen[k] {
-			continue
+		if f.Level == LevelError {
+			if seen[f.Key] {
+				continue
+			}
+			seen[f.Key] = true
 		}
-		seen[k] = true
 		out = append(out, f)
 	}
 	return out
