@@ -219,9 +219,9 @@ func TestReconcileFailsInterruptedJobs(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { s.Close() })
-	n, err := s.Reconcile()
-	if err != nil || n != 2 {
-		t.Fatalf("Reconcile = %d, %v; want 2", n, err)
+	rep, err := s.Reconcile()
+	if err != nil || rep.Interrupted != 2 {
+		t.Fatalf("Reconcile = %+v, %v; want 2 interrupted", rep, err)
 	}
 
 	got, _ := s.Get(queued.ID)
@@ -260,14 +260,14 @@ func TestReconcileFailsInterruptedJobs(t *testing.T) {
 	if err := live.Save(running); err != nil {
 		t.Fatal(err)
 	}
-	if n, err := s.Reconcile(); err != nil || n != 0 {
-		t.Fatalf("Reconcile with a live owner = %d, %v; want 0", n, err)
+	if rep, err := s.Reconcile(); err != nil || rep.Interrupted != 0 {
+		t.Fatalf("Reconcile with a live owner = %+v, %v; want 0 interrupted", rep, err)
 	}
 	if got, _ := s.Get(running.ID); got.State != StateDeploying {
 		t.Fatalf("a live process's job was failed: %+v", got)
 	}
 	live.Close()
-	if n, err := s.Reconcile(); err != nil || n != 1 {
-		t.Fatalf("Reconcile after the owner exited = %d, %v; want 1", n, err)
+	if rep, err := s.Reconcile(); err != nil || rep.Interrupted != 1 {
+		t.Fatalf("Reconcile after the owner exited = %+v, %v; want 1 interrupted", rep, err)
 	}
 }

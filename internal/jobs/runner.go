@@ -277,10 +277,12 @@ func FailUnstarted(job Job, reason string) Job {
 // Refuse records job as failed because the runner would not take it (a busy
 // or shutting-down runner), so its id never reads as queued, and returns the
 // failed record (PD-04). The 503 answer rests on this method, so how refusals
-// are stored can change without touching the handlers.
+// are stored can change without touching the handlers. The record is kept (the
+// answer names its id) but through SaveRefused, which keeps refusals out of the
+// history limit (PD-17).
 func (r *Runner) Refuse(job Job, reason error) (Job, error) {
 	job = FailUnstarted(job, reason.Error())
-	return job, r.opts.Store.Save(job)
+	return job, r.opts.Store.SaveRefused(job)
 }
 
 // Run deploys every environment of job in order, one engine invocation each,

@@ -140,3 +140,46 @@ func TestReconcileQuarantinesCorruptRecords(t *testing.T) {
 		t.Errorf("the corrupt record is named on %d log lines, want exactly 1 (from Reconcile):\n%s", lines, logs.String())
 	}
 }
+
+// Reconcile reports what it did, for the start-up log line.
+func TestReconcileReportCounts(t *testing.T) {
+	stateDir := t.TempDir()
+	dead := openStoreIn(t, stateDir)
+	interrupted := finishedJob(t, time.Now().Add(-time.Hour))
+	interrupted.State, interrupted.FinishedAt = StateDeploying, nil
+	interrupted.Results[0].State = StateDeploying
+	if err := dead.Save(interrupted); err != nil {
+		t.Fatal(err)
+	}
+	deadLock := filepath.Join(stateDir, "instances", dead.instance+".lock")
+	if err := dead.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(deadLock, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	tmp := filepath.Join(stateDir, "jobs", ".z.json.tmp-9")
+	if err := os.WriteFile(tmp, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	long := time.Now().Add(-time.Hour)
+	if err := os.Chtimes(tmp, long, long); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(stateDir, "jobs", newJobID()+".json"), []byte("not json"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	s := openStoreIn(t, stateDir)
+	rep, err := s.Reconcile()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := (ReconcileReport{Interrupted: 1, StaleLocks: 1, TempFiles: 1, Quarantined: 1}); rep != want {
+		t.Fatalf("Reconcile = %+v, want %+v", rep, want)
+	}
+	// A second pass has nothing left to do.
+	if rep, err := s.Reconcile(); err != nil || rep != (ReconcileReport{}) {
+		t.Fatalf("second Reconcile = %+v, %v; want nothing", rep, err)
+	}
+}

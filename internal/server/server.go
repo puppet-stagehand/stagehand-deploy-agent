@@ -76,11 +76,15 @@ func OptionsFromConfig(ctx context.Context, cfg *config.Config, log *slog.Logger
 	if err != nil {
 		return Options{}, err
 	}
-	if n, err := store.Reconcile(); err != nil {
+	rep, err := store.Reconcile()
+	if err != nil {
 		store.Close()
 		return Options{}, fmt.Errorf("reconciling deploy records: %w", err)
-	} else if n > 0 {
-		log.Warn("deploys interrupted by a restart were marked failed", "component", "server", "count", n)
+	}
+	log.Info("deploy store reconciled", "component", "server", "interrupted", rep.Interrupted,
+		"stale_locks_removed", rep.StaleLocks, "temp_files_removed", rep.TempFiles, "records_quarantined", rep.Quarantined)
+	if rep.Interrupted > 0 {
+		log.Warn("deploys interrupted by a restart were marked failed", "component", "server", "count", rep.Interrupted)
 	}
 	runner, err := jobs.NewRunner(jobs.Options{
 		Engine:      eng,

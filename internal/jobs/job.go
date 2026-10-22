@@ -107,6 +107,11 @@ var ErrNotFound = errors.New("deploy not found")
 type Store interface {
 	// Save inserts or replaces a job.
 	Save(job Job) error
+	// SaveRefused records a job the runner refused (the 503 answers). It stays
+	// readable like any other record, but does not count toward the history
+	// limit, and only the newest MaxRefusedRecords are kept, so refusals can
+	// never push real deploys out (FORK-IN-03, D-20, PD-17).
+	SaveRefused(job Job) error
 	// Get returns the job with id, or ErrNotFound.
 	Get(id string) (Job, error)
 	// List returns up to limit jobs, newest first.
@@ -114,23 +119,30 @@ type Store interface {
 }
 
 // MemoryStore is a bounded in-memory Store for tests. History is lost on
-// restart, so the server uses FileStore.
+// restart, so the server uses FileStore. It keeps at most max finished
+// records (unfinished jobs are never evicted) and, apart from them, the newest
+// MaxRefusedRecords refused ones.
 type MemoryStore struct {
-	mu    sync.Mutex
-	max   int
-	jobs  map[string]Job
-	order []string // oldest first
+	mu      sync.Mutex
+	max     int
+	jobs    map[string]Job
+	refused map[string]bool
+	order   []string // oldest first
 }
 
-// NewMemoryStore keeps at most max jobs, evicting the oldest.
+// NewMemoryStore keeps at most max finished jobs, evicting the oldest.
 func NewMemoryStore(max int) *MemoryStore {
 	if max < 1 {
 		max = 1
 	}
-	return &MemoryStore{max: max, jobs: map[string]Job{}}
+	return &MemoryStore{max: max, jobs: map[string]Job{}, refused: map[string]bool{}}
 }
 
-func (s *MemoryStore) Save(job Job) error {
+func (s *MemoryStore) Save(job Job) error { return s.save(job, false) }
+
+func (s *MemoryStore) SaveRefused(job Job) error { return s.save(job, true) }
+
+func (s *MemoryStore) save(job Job, refused bool) error {
 	if job.ID == "" {
 		return fmt.Errorf("job has no id")
 	}
@@ -138,13 +150,44 @@ func (s *MemoryStore) Save(job Job) error {
 	defer s.mu.Unlock()
 	if _, ok := s.jobs[job.ID]; !ok {
 		s.order = append(s.order, job.ID)
-		for len(s.order) > s.max {
-			delete(s.jobs, s.order[0])
-			s.order = s.order[1:]
-		}
 	}
 	s.jobs[job.ID] = job.clone()
+	if refused {
+		s.refused[job.ID] = true
+	} else {
+		delete(s.refused, job.ID)
+	}
+	s.evictLocked()
 	return nil
+}
+
+// evictLocked drops the oldest finished records beyond max and the oldest
+// refused records beyond MaxRefusedRecords.
+func (s *MemoryStore) evictLocked() {
+	finished, refused := 0, 0
+	for _, id := range s.order {
+		switch {
+		case s.refused[id]:
+			refused++
+		case s.jobs[id].State == "" || s.jobs[id].State.Terminal():
+			finished++
+		}
+	}
+	keep := s.order[:0]
+	for _, id := range s.order {
+		switch {
+		case s.refused[id] && refused > MaxRefusedRecords:
+			refused--
+			delete(s.jobs, id)
+			delete(s.refused, id)
+		case !s.refused[id] && (s.jobs[id].State == "" || s.jobs[id].State.Terminal()) && finished > s.max:
+			finished--
+			delete(s.jobs, id)
+		default:
+			keep = append(keep, id)
+		}
+	}
+	s.order = keep
 }
 
 func (s *MemoryStore) Get(id string) (Job, error) {
