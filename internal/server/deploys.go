@@ -2,9 +2,11 @@ package server
 
 // Stagehand: the /api/v1/deploys route group (D-10, D-12), ported from the
 // fork's api/deploys.go with gin replaced by net/http. Every status, header and
-// string is the fork's, byte for byte (plan 02 records the deliberate
-// divergences). Callers have already presented an allow-listed Puppet
-// certificate in the TLS handshake; nothing here authorises anyone.
+// string is the fork's, byte for byte, except the differences listed in
+// contract.Divergences (an oversized body answers 413 and data after the JSON
+// object answers 400; ServeMux answers unknown paths). contract.TestGolden
+// holds this file to that. Callers have already presented an allow-listed
+// Puppet certificate in the TLS handshake; nothing here authorises anyone.
 //
 //	POST /api/v1/deploys       {"environments":[{"name":"production","expected_sha":"<40 hex>"}],"wait":false}
 //	                           wait false: 202 with the queued record; poll GET by id (MH-01)
@@ -19,6 +21,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"net/http"
 	"strconv"
@@ -30,6 +33,12 @@ const (
 	maxDeployBody    = 64 << 10
 	defaultListLimit = 20
 	maxListLimit     = jobs.MaxListLimit
+
+	// Request hardening, the two deliberate request-side differences from the
+	// fork (FORK-IN-06; contract.Divergences). TestDeployOversizedBody ties the
+	// number in bodyTooLarge to maxDeployBody.
+	bodyTooLarge = "request body exceeds 65536 bytes"
+	trailingData = "request body is not valid JSON: unexpected data after the JSON object"
 )
 
 // DeployHandlers serves the deploy API.
@@ -99,8 +108,23 @@ func (req deployRequest) validate() (field, msg string) {
 func (h *DeployHandlers) create(w http.ResponseWriter, r *http.Request) {
 	var req deployRequest
 	r.Body = http.MaxBytesReader(w, r.Body, maxDeployBody)
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	dec := json.NewDecoder(r.Body)
+	if err := dec.Decode(&req); err != nil {
+		if tooLarge(err) {
+			failure(w, http.StatusRequestEntityTooLarge, bodyTooLarge)
+			return
+		}
 		failure(w, http.StatusBadRequest, "request body is not valid JSON: "+err.Error())
+		return
+	}
+	// Exactly one JSON value: anything after it but whitespace is refused. The
+	// read also runs into the size cap, so padding after the object is a 413.
+	if err := dec.Decode(new(json.RawMessage)); !errors.Is(err, io.EOF) {
+		if tooLarge(err) {
+			failure(w, http.StatusRequestEntityTooLarge, bodyTooLarge)
+			return
+		}
+		failure(w, http.StatusBadRequest, trailingData)
 		return
 	}
 	if field, msg := req.validate(); field != "" {
@@ -138,6 +162,12 @@ func (h *DeployHandlers) create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, job)
+}
+
+// tooLarge reports whether err is the size cap of http.MaxBytesReader.
+func tooLarge(err error) bool {
+	var mbe *http.MaxBytesError
+	return errors.As(err, &mbe)
 }
 
 // refuse answers 503 for a job the runner would not take. The runner records

@@ -238,7 +238,7 @@ engine:
 		t.Fatal(err)
 	}
 	// The answer was written while the engine was still asleep (600 ms): that
-	// is what "answers at once" means, stated as state rather than elapsed time.
+	// is what "answers at once" means, stated as state rather than as a clock reading.
 	if accepted.ID == "" || accepted.State != "queued" {
 		t.Fatalf("202 body = %s", w.Body)
 	}
