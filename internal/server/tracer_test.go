@@ -75,9 +75,9 @@ deploys:
   state_dir: %q
 %s`, f.tls.Certificate, f.tls.Key, f.tls.ClientCA, allowed, f.stateDir, extra)
 	p := writeFile(t, f.dir, "config.yml", []byte(y))
-	cfg, err := config.Load(p)
-	if err != nil {
-		t.Fatal(err)
+	cfg, findings := config.Load(p, false)
+	if cfg == nil || config.HasErrors(findings) {
+		t.Fatalf("config findings: %+v", findings)
 	}
 	return cfg
 }

@@ -7,6 +7,7 @@ import (
 	"context"
 	"flag"
 	"fmt"
+	"io"
 	"log/slog"
 	"os"
 	"os/signal"
@@ -19,11 +20,14 @@ import (
 // version is overridden at build time: -ldflags "-X main.version=1.0.0".
 var version = "dev"
 
+// geteuid is a variable so tests can stand in for root.
+var geteuid = os.Geteuid
+
 func main() {
-	os.Exit(run(os.Args[1:]))
+	os.Exit(run(os.Args[1:], os.Stdout, os.Stderr))
 }
 
-func run(args []string) int {
+func run(args []string, stdout, stderr io.Writer) int {
 	if len(args) == 0 {
 		usage()
 		return 2
@@ -62,9 +66,9 @@ func serve(args []string) int {
 // runServe builds the store, runner, mux and mTLS server from the strict
 // config and runs them until SIGTERM or SIGINT.
 func runServe(path string, log *slog.Logger) error {
-	cfg, err := config.Load(path)
-	if err != nil {
-		return err
+	cfg, findings := config.Load(path, false)
+	if cfg == nil {
+		return fmt.Errorf("%v", findings)
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()

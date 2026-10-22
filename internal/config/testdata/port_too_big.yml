@@ -1,0 +1,36 @@
+# A complete, valid configuration: every key set to a legal value.
+server:
+  address: ""
+  port: 70000
+  tls:
+    certificate: /etc/puppetlabs/puppet/ssl/certs/primary.example.com.pem
+    key: /run/credentials/stagehand-deploy-agent.service/server.key
+    client_ca: /etc/puppetlabs/puppet/ssl/certs/ca.pem
+    crl: /etc/puppetlabs/puppetserver/ca/ca_crl.pem
+    allowed_certnames:
+      - stagehand-code-manager
+      - primary.example.com
+    allowed_fingerprints:
+      - "00:01:02:03:04:05:06:07:08:09:0A:0B:0C:0D:0E:0F:10:11:12:13:14:15:16:17:18:19:1A:1B:1C:1D:1E:1F"
+ops:
+  listen: 127.0.0.1:8089
+engine:
+  name: r10k
+  command_path: /opt/puppetlabs/puppet/bin/r10k
+  config_path: /etc/puppetlabs/r10k/r10k.yaml
+  verbose: true
+  deploy_modules: true
+  generate_types: true
+  env_incremental: false
+  use_legacy_puppetfile_flag: false
+  ssh_config: /etc/stagehand-deploy-agent/ssh_config
+deploys:
+  basedir: /etc/puppetlabs/code/environments
+  state_dir: /var/lib/stagehand-deploy-agent
+  timeout: 15m
+  output_limit: 262144
+  max_jobs: 500
+  protected_environments:
+    - production
+log:
+  level: info

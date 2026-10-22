@@ -1,0 +1,7 @@
+# Only the keys that have no default.
+server:
+  tls:
+    certificate: /etc/ssl/server.pem
+    key: /etc/ssl/server.key
+    client_ca: /etc/ssl/ca.pem
+    allowed_certnames: [stagehand-code-manager]

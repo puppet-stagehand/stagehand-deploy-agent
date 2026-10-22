@@ -126,8 +126,8 @@ func (d *Duration) UnmarshalYAML(n *yaml.Node) error {
 // Std returns the value as a time.Duration.
 func (d Duration) Std() time.Duration { return time.Duration(d) }
 
-// Load reads, strictly decodes, defaults and validates the file at path.
-func Load(path string) (*Config, error) {
+// loadOld is the tracer loader; RED-stage stub material replaced in GREEN.
+func loadOld(path string) (*Config, error) {
 	f, err := os.Open(path)
 	if err != nil {
 		return nil, fmt.Errorf("config: %w", err)
