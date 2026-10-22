@@ -158,3 +158,38 @@ func TestServeLegacyFlagIsAUsageError(t *testing.T) {
 		t.Fatalf("serve --legacy exit = %d, want 2", code)
 	}
 }
+
+// D-20: serve run as uid 0 exits 77 and says what to do instead. There is no
+// override: check-config and version still run as root.
+func TestServeRefusesRoot(t *testing.T) {
+	old := geteuid
+	geteuid = func() int { return 0 }
+	t.Cleanup(func() { geteuid = old })
+
+	code, _, errOut := runCLI(t, "serve", "--config", testdata+"valid.yml")
+	if code != 77 || !strings.Contains(errOut, "refusing to run as root") || !strings.Contains(errOut, "its own user") {
+		t.Fatalf("serve as root: exit = %d stderr = %q", code, errOut)
+	}
+	if code, _, _ := runCLI(t, "version"); code != 0 {
+		t.Errorf("version as root = %d, want 0", code)
+	}
+	if code, _, _ := runCLI(t, "--check-config", "--config", testdata+"valid.yml"); code != 0 {
+		t.Errorf("--check-config as root = %d, want 0", code)
+	}
+	// No flag turns the refusal off.
+	if code, _, _ := runCLI(t, "serve", "--allow-root", "--config", testdata+"valid.yml"); code != 77 {
+		t.Errorf("serve --allow-root as root = %d, want 77", code)
+	}
+}
+
+// As any other user serve goes on to load its configuration.
+func TestServeAsAnotherUserLoadsItsConfig(t *testing.T) {
+	notRoot(t)
+	code, _, errOut := runCLI(t, "serve", "--config", filepath.Join(t.TempDir(), "absent.yml"))
+	if code != 78 || strings.Contains(errOut, "root") {
+		t.Fatalf("exit = %d stderr = %q, want 78 from the config step", code, errOut)
+	}
+	if code, _, _ := runCLI(t, "serve", "--allow-root"); code != 2 {
+		t.Errorf("serve --allow-root = %d, want 2 (no such flag)", code)
+	}
+}

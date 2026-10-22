@@ -2,14 +2,25 @@ package engine
 
 import (
 	"bufio"
+	"context"
 	"encoding/json"
 	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/puppet-stagehand/stagehand-deploy-agent/internal/config"
+	"github.com/puppet-stagehand/stagehand-deploy-agent/internal/jobs"
+	"github.com/puppet-stagehand/stagehand-deploy-agent/internal/jobs/fakeengine"
 )
+
+// TestMain lets this test binary stand in for r10k (see package fakeengine).
+func TestMain(m *testing.M) {
+	fakeengine.MaybeRun()
+	os.Exit(m.Run())
+}
 
 // fork-argv.jsonl was recorded by running the fork's own helpers
 // (webhook-go v2.15.1-stagehand.1, lib/helpers GetR10kDeployEnvironmentCommand
@@ -144,5 +155,80 @@ func TestEngineFallbackPaths(t *testing.T) {
 	}
 	if got := G10kDeployArgv(config.Engine{}, "production"); got[0] != "g10k" || got[1] != "-config=/etc/puppetlabs/r10k/r10k.yaml" {
 		t.Fatalf("g10k fallback argv = %q", got)
+	}
+}
+
+const sshSHA = "0123456789abcdef0123456789abcdef01234567"
+
+// deployThroughRunner runs one real deploy through a real jobs.Runner and the
+// fake engine, and returns the git variables the engine child was started with.
+func deployThroughRunner(t *testing.T, cfg config.Engine) []string {
+	t.Helper()
+	exe, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg.Name, cfg.CommandPath = "r10k", exe
+	eng, err := Build(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fixture, _ := filepath.Abs("../jobs/testdata/r10k-5.0.3/deploy-success.json")
+	basedir := t.TempDir()
+	envLog := filepath.Join(t.TempDir(), "env.log")
+	t.Setenv(fakeengine.FixtureEnv, fixture)
+	t.Setenv(fakeengine.BasedirEnv, basedir)
+	t.Setenv(fakeengine.SHAEnv, sshSHA)
+	t.Setenv(fakeengine.EnvLogEnv, envLog)
+
+	r, err := jobs.NewRunner(jobs.Options{Engine: eng, Basedir: basedir, Timeout: time.Minute, OutputLimit: 4096, Store: jobs.NewMemoryStore(10)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	job, err := r.NewJob([]jobs.EnvRequest{{Name: "production", ExpectedSHA: sshSHA}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	job, err = r.Run(context.Background(), job)
+	if err != nil || job.State != jobs.StateDeployed {
+		t.Fatalf("deploy: state=%s err=%v job=%+v", job.State, err, job)
+	}
+	b, err := os.ReadFile(envLog)
+	if err != nil {
+		t.Fatalf("the fake engine recorded no environment: %v", err)
+	}
+	return strings.Split(strings.TrimSpace(string(b)), "\n")
+}
+
+// D-03: with engine.ssh_config set, r10k's git is told to use the agent's own
+// ssh_config, and an ssh command inherited from the agent's environment is
+// replaced, not appended to (T-57.6.2-10).
+func TestEngineSSHConfigReachesTheChild(t *testing.T) {
+	t.Setenv("GIT_SSH_COMMAND", "ssh -o StrictHostKeyChecking=no")
+	got := deployThroughRunner(t, config.Engine{SSHConfig: "/etc/stagehand-deploy-agent/ssh_config"})
+	want := []string{"GIT_SSH_COMMAND=ssh -F /etc/stagehand-deploy-agent/ssh_config", "GIT_TERMINAL_PROMPT=0"}
+	if !slices.Equal(got, want) {
+		t.Fatalf("child environment = %q, want %q", got, want)
+	}
+}
+
+// Without engine.ssh_config the agent sets no ssh command of its own and an
+// inherited one is removed, so a stray environment cannot weaken pinning.
+func TestEngineSSHAbsentUnsetsAnInheritedCommand(t *testing.T) {
+	t.Setenv("GIT_SSH_COMMAND", "ssh -o StrictHostKeyChecking=no")
+	got := deployThroughRunner(t, config.Engine{})
+	want := []string{"GIT_SSH_COMMAND=unset", "GIT_TERMINAL_PROMPT=0"}
+	if !slices.Equal(got, want) {
+		t.Fatalf("child environment = %q, want %q", got, want)
+	}
+}
+
+// git passes GIT_SSH_COMMAND through a shell, so a path with anything outside
+// [A-Za-z0-9._/-] never reaches it.
+func TestEngineSSHRefusesAPathGitWouldPassToAShell(t *testing.T) {
+	for _, p := range []string{"/etc/x y", "/etc/x;id", "/etc/$(id)", "/etc/`id`", "relative/ssh_config", "/etc/x'y", "/etc/x\ny"} {
+		if _, err := Build(config.Engine{Name: "r10k", SSHConfig: p}); err == nil || !strings.Contains(err.Error(), "engine.ssh_config") {
+			t.Errorf("Build with ssh_config %q: err = %v, want one naming engine.ssh_config", p, err)
+		}
 	}
 }

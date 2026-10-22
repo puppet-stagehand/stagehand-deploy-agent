@@ -62,6 +62,10 @@ const (
 	FloodBytesEnv = "STAGEHAND_FAKE_ENGINE_FLOOD_BYTES"
 	// PIDFileEnv is where the child started by "hang" writes its pid.
 	PIDFileEnv = "STAGEHAND_FAKE_ENGINE_PIDFILE"
+	// EnvLogEnv is a file the fake appends the two git variables it was
+	// started with to: "GIT_SSH_COMMAND=<value or unset>" and
+	// "GIT_TERMINAL_PROMPT=<value or unset>", one run after another.
+	EnvLogEnv = "STAGEHAND_FAKE_ENGINE_ENV_LOG"
 	// ExitCodeEnv, when set, replaces the fixture's exit code: it shows that
 	// a verdict does not rest on the exit code alone.
 	ExitCodeEnv = "STAGEHAND_FAKE_ENGINE_EXIT_CODE"
