@@ -1,3 +1,7 @@
+// Derived in part from voxpupuli/webhook-go config/config.go (Apache-2.0,
+// https://github.com/voxpupuli/webhook-go): the key names, the defaults and the
+// r10k flag set. Modified for the Stagehand deploy agent.
+
 // Package config loads the agent's strict YAML configuration (D-20): the file
 // is decoded with go.yaml.in/yaml/v3 and KnownFields(true), so an unknown key
 // stops the agent at start instead of being ignored. There is no viper.
