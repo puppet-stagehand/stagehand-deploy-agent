@@ -1,0 +1,271 @@
+package webhook_test
+
+// TestAgentContract drives the Code Manager pack's REAL, unmodified deploy
+// client (internal/deploy/webhook at 855c652) against the REAL stagehand-deploy-agent
+// binary, with the agent's fake engine standing in for r10k. It proves that the
+// agent gives the pack the same outcomes and the same failure reasons it gets
+// from the webhook-go fork.
+//
+// This file is NOT part of the pack and NOT compiled by the agent: it is stored
+// with a .txt suffix, and hack/pack-contract.sh copies it into the pack
+// checkout as internal/deploy/webhook/agent_contract_test.go for one run and
+// removes it afterwards (D-08, D-11: nothing is left in, or committed to, the
+// pack repository). It reuses the helpers the pack's own tests define in
+// fakefork_test.go (host, certname, sha, run, reasonOf) and the pack's
+// forktest PKI.
+//
+// Environment, all set by the script:
+//
+//	STAGEHAND_AGENT_BIN               the built agent binary
+//	STAGEHAND_FAKE_ENGINE_BIN         the built fake engine (the agent's command_path)
+//	STAGEHAND_FAKE_ENGINE_FIXTURE_DIR the SDK harness r10k fixtures
+//	                                  (internal/jobs/testdata/r10k-5.0.3 in the agent repo)
+
+import (
+	"bytes"
+	"crypto/tls"
+	"crypto/x509"
+	"encoding/pem"
+	"fmt"
+	"net"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"strings"
+	"syscall"
+	"testing"
+	"time"
+
+	"github.com/puppetlabs/stagehand-pack-code-manager/internal/deploy"
+	"github.com/puppetlabs/stagehand-pack-code-manager/internal/deploy/webhook"
+	"github.com/puppetlabs/stagehand-pack-code-manager/internal/deploy/webhook/forktest"
+)
+
+func mustEnv(t *testing.T, name string) string {
+	t.Helper()
+	v := os.Getenv(name)
+	if v == "" {
+		t.Fatalf("%s is not set; run this through hack/pack-contract.sh", name)
+	}
+	return v
+}
+
+func writeFileT(t *testing.T, path string, b []byte) {
+	t.Helper()
+	if err := os.WriteFile(path, b, 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// liveAgent is one agent process serving mTLS for one estate CA.
+type liveAgent struct {
+	pki  *forktest.PKI
+	port int
+	log  *bytes.Buffer
+}
+
+// startAgent writes the agent's server certificate (from pki), the CA bundle
+// and a strict config into a temp dir, starts the binary with `serve --config`,
+// and waits for its port. fixture is the fake engine's recorded run, engineSHA
+// the commit the fake engine reports.
+func startAgent(t *testing.T, pki *forktest.PKI, fixture, engineSHA string) *liveAgent {
+	t.Helper()
+	bin := mustEnv(t, "STAGEHAND_AGENT_BIN")
+	engine := mustEnv(t, "STAGEHAND_FAKE_ENGINE_BIN")
+	fixtureDir := mustEnv(t, "STAGEHAND_FAKE_ENGINE_FIXTURE_DIR")
+
+	dir := t.TempDir()
+	basedir := filepath.Join(dir, "environments")
+	stateDir := filepath.Join(dir, "state")
+	if err := os.MkdirAll(basedir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+
+	sc := pki.ServerCert(t, host)
+	keyDER, err := x509.MarshalPKCS8PrivateKey(sc.PrivateKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	certPath, keyPath, caPath := filepath.Join(dir, "server.pem"), filepath.Join(dir, "server.key"), filepath.Join(dir, "ca.pem")
+	writeFileT(t, certPath, pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: sc.Certificate[0]}))
+	writeFileT(t, keyPath, pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: keyDER}))
+	writeFileT(t, caPath, []byte(pki.CAPEM))
+
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	port := ln.Addr().(*net.TCPAddr).Port
+	ln.Close()
+
+	cfgPath := filepath.Join(dir, "config.yml")
+	writeFileT(t, cfgPath, []byte(fmt.Sprintf(`server:
+  address: 127.0.0.1
+  port: %d
+  tls:
+    certificate: %s
+    key: %s
+    client_ca: %s
+    allowed_certnames: [%s]
+engine:
+  name: r10k
+  command_path: %s
+deploys:
+  basedir: %s
+  state_dir: %s
+  timeout: 1m
+`, port, certPath, keyPath, caPath, certname, engine, basedir, stateDir)))
+
+	cmd := exec.Command(bin, "serve", "--config", cfgPath)
+	cmd.Env = append(os.Environ(),
+		"STAGEHAND_FAKE_ENGINE_FIXTURE="+filepath.Join(fixtureDir, fixture),
+		"STAGEHAND_FAKE_ENGINE_BASEDIR="+basedir,
+		"STAGEHAND_FAKE_ENGINE_SHA="+engineSHA,
+	)
+	out := &bytes.Buffer{}
+	cmd.Stdout, cmd.Stderr = out, out
+	if err := cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	exited := make(chan struct{})
+	go func() { _ = cmd.Wait(); close(exited) }()
+	t.Cleanup(func() {
+		_ = cmd.Process.Signal(syscall.SIGTERM)
+		select {
+		case <-exited:
+		case <-time.After(10 * time.Second):
+			_ = cmd.Process.Kill()
+			<-exited
+		}
+		if t.Failed() {
+			t.Logf("agent log:\n%s", out.String())
+		}
+	})
+
+	deadline := time.Now().Add(15 * time.Second)
+	for {
+		c, err := net.DialTimeout("tcp", fmt.Sprintf("127.0.0.1:%d", port), time.Second)
+		if err == nil {
+			c.Close()
+			break
+		}
+		select {
+		case <-exited:
+			t.Fatalf("the agent exited before listening:\n%s", out.String())
+		default:
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("the agent did not listen on %d:\n%s", port, out.String())
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	return &liveAgent{pki: pki, port: port, log: out}
+}
+
+// client is the pack's real webhook.Client for this agent, presenting cert.
+func (a *liveAgent) client(t *testing.T, cert tls.Certificate) *webhook.Client {
+	t.Helper()
+	c, err := webhook.New(webhook.Config{Host: host, Port: a.port, CAPEM: a.pki.CAPEM, Certificate: cert},
+		webhook.WithResolver(forktest.Loopback),
+		webhook.WithPollInterval(50*time.Millisecond),
+		webhook.WithPollCeiling(30*time.Second),
+		webhook.WithRetryAfterCap(20*time.Millisecond),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return c
+}
+
+func TestAgentContract(t *testing.T) {
+	t.Run("probe-reachable", func(t *testing.T) {
+		pki := forktest.NewPKI(t, "Puppet CA: "+host)
+		a := startAgent(t, pki, "deploy-success.json", sha('a'))
+		h, err := a.client(t, pki.ClientCert(t, certname, forktest.SignOptions{})).Probe(t.Context())
+		if err != nil || h.State != deploy.HealthReachable {
+			t.Fatalf("Probe = %+v, %v", h, err)
+		}
+	})
+
+	t.Run("deploy-success", func(t *testing.T) {
+		pki := forktest.NewPKI(t, "Puppet CA: "+host)
+		a := startAgent(t, pki, "deploy-success.json", sha('a'))
+		res, err := run(t, a.client(t, pki.ClientCert(t, certname, forktest.SignOptions{})),
+			deploy.Target{Env: "production", ExpectedSHA: sha('a')})
+		if err != nil || len(res) != 1 {
+			t.Fatalf("results = %+v, %v", res, err)
+		}
+		got := res[0]
+		if got.State != deploy.StateDeployed || got.DeployedSHA != sha('a') || got.Error != "" ||
+			got.ExitCode == nil || *got.ExitCode != 0 || got.StartedAt.IsZero() || got.FinishedAt.IsZero() ||
+			!strings.Contains(got.Output, "Deploying environment") {
+			t.Fatalf("result = %+v", got)
+		}
+	})
+
+	t.Run("wrong-deployed-sha-fails", func(t *testing.T) {
+		pki := forktest.NewPKI(t, "Puppet CA: "+host)
+		// The engine reports b; the pack asked for a.
+		a := startAgent(t, pki, "deploy-success.json", sha('b'))
+		res, err := run(t, a.client(t, pki.ClientCert(t, certname, forktest.SignOptions{})),
+			deploy.Target{Env: "production", ExpectedSHA: sha('a')})
+		if err != nil || len(res) != 1 {
+			t.Fatalf("results = %+v, %v", res, err)
+		}
+		if res[0].State != deploy.StateFailed || res[0].DeployedSHA != sha('b') ||
+			!strings.Contains(res[0].Error, sha('a')) {
+			t.Fatalf("result = %+v; want failed with the wrong deployed commit named", res[0])
+		}
+	})
+
+	t.Run("bad-module-ref-fails", func(t *testing.T) {
+		pki := forktest.NewPKI(t, "Puppet CA: "+host)
+		a := startAgent(t, pki, "bad-module-ref.json", sha('a'))
+		res, err := run(t, a.client(t, pki.ClientCert(t, certname, forktest.SignOptions{})),
+			deploy.Target{Env: "production", ExpectedSHA: sha('a')})
+		if err != nil || len(res) != 1 {
+			t.Fatalf("results = %+v, %v", res, err)
+		}
+		if res[0].State != deploy.StateFailed || res[0].Error == "" {
+			t.Fatalf("result = %+v; want failed with a reason", res[0])
+		}
+		t.Logf("bad-module-ref reported: %q", res[0].Error)
+	})
+
+	t.Run("unprocessable-field", func(t *testing.T) {
+		pki := forktest.NewPKI(t, "Puppet CA: "+host)
+		a := startAgent(t, pki, "deploy-success.json", sha('a'))
+		_, err := a.client(t, pki.ClientCert(t, certname, forktest.SignOptions{})).
+			Deploy(t.Context(), []deploy.Target{{Env: "production", ExpectedSHA: strings.Repeat("a", 64)}})
+		want := `the deploy service refused the request (HTTP 422, field "environments[0].expected_sha")`
+		if got := reasonOf(t, err); got != want {
+			t.Fatalf("reason = %q, want %q", got, want)
+		}
+	})
+
+	t.Run("foreign-certificate-refused", func(t *testing.T) {
+		pki := forktest.NewPKI(t, "Puppet CA: "+host)
+		rogue := forktest.NewPKI(t, "Puppet CA: rogue")
+		a := startAgent(t, pki, "deploy-success.json", sha('a'))
+		c := a.client(t, rogue.ClientCert(t, certname, forktest.SignOptions{}))
+		_, err := c.Deploy(t.Context(), []deploy.Target{{Env: "production", ExpectedSHA: sha('a')}})
+		if got := reasonOf(t, err); got != webhook.ReasonCertRefused {
+			t.Fatalf("reason = %q, want %q", got, webhook.ReasonCertRefused)
+		}
+		h, _ := c.Probe(t.Context())
+		if h.State != deploy.HealthCredentialExpired || h.Detail != webhook.ReasonCertRefused {
+			t.Fatalf("Probe = %+v", h)
+		}
+	})
+
+	t.Run("unknown-id-no-record", func(t *testing.T) {
+		pki := forktest.NewPKI(t, "Puppet CA: "+host)
+		a := startAgent(t, pki, "deploy-success.json", sha('a'))
+		ref := fmt.Sprintf(`{"v":1,"id":"00000000000000000000000000000000","started":%q,"envs":[{"env":"production","expected":%q}]}`,
+			time.Now().UTC().Truncate(time.Second).Format(time.RFC3339), sha('a'))
+		res, err := a.client(t, pki.ClientCert(t, certname, forktest.SignOptions{})).Wait(t.Context(), ref)
+		if err != nil || len(res) != 1 || res[0].State != deploy.StateFailed || res[0].Error != webhook.ReasonNoRecord {
+			t.Fatalf("results = %+v, %v; want failed with %q", res, err, webhook.ReasonNoRecord)
+		}
+	})
+}
