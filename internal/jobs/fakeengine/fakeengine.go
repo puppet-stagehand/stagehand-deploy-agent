@@ -11,6 +11,8 @@
 //
 //   - records the argv it was started with (one JSON array per line in
 //     ArgvLogEnv), so a test can prove the runner used an argv and no shell;
+//   - records the git variables it was started with (EnvLogEnv), so a test
+//     can prove which ssh command and prompt setting the engine child got;
 //   - sleeps DelayEnv first, when set, so a test can watch a deploy in flight;
 //   - prints the fixture's stdout and stderr;
 //   - writes the fixture's marker_after into <BasedirEnv>/<env>/ only when the
@@ -221,6 +223,17 @@ func run(fixturePath string, args []string) (int, error) {
 		line, _ := json.Marshal(args)
 		if err := appendLine(log, line); err != nil {
 			return 0, err
+		}
+	}
+	if log := os.Getenv(EnvLogEnv); log != "" {
+		for _, name := range []string{"GIT_SSH_COMMAND", "GIT_TERMINAL_PROMPT"} {
+			v, ok := os.LookupEnv(name)
+			if !ok {
+				v = "unset"
+			}
+			if err := appendLine(log, []byte(name+"="+v)); err != nil {
+				return 0, err
+			}
 		}
 	}
 	if d := os.Getenv(DelayEnv); d != "" {

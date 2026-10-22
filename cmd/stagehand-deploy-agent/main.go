@@ -101,6 +101,12 @@ func topLevel(args []string, stdout, stderr io.Writer) int {
 }
 
 func serve(args []string, stderr io.Writer) int {
+	// D-20: the agent has no reason to be root, and there is no flag,
+	// variable or key that lets it. This is the first thing serve does.
+	if geteuid() == 0 {
+		fmt.Fprintln(stderr, "stagehand-deploy-agent: refusing to run as root (uid 0); run it as its own user, for example with the packaged systemd unit")
+		return exitRoot
+	}
 	fs := flag.NewFlagSet("serve", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
 	explicit := fs.String("config", "", "path to the YAML configuration file")

@@ -1,0 +1,43 @@
+# Continuous integration: vet, the race detector, a vulnerability scan and a
+# shell lint on every push and pull request. Every action is pinned by commit
+# SHA (the tag is in the comment); the SHAs are the ones the fork's release
+# workflow already uses. The workflow is named "ci" because the release plan
+# finds a run by that name.
+name: ci
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          # The 1.25 line, newest patch. go-version-file would read go.mod's
+          # "go 1.25.0" and install exactly 1.25.0, whose standard library has
+          # the fixed vulnerabilities govulncheck below reports.
+          go-version: "1.25"
+          check-latest: true
+
+      - name: Vet
+        run: go vet ./...
+
+      - name: Test with the race detector
+        run: go test -race -count=1 ./...
+
+      # A fixed version, not latest, so a new release cannot change the result
+      # of an old commit.
+      - name: Scan for known vulnerabilities
+        run: go run golang.org/x/vuln/cmd/govulncheck@v1.1.4 ./...
+
+      - name: Lint the shell scripts
+        run: shellcheck hack/*.sh

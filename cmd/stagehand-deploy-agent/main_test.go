@@ -177,8 +177,8 @@ func TestServeRefusesRoot(t *testing.T) {
 		t.Errorf("--check-config as root = %d, want 0", code)
 	}
 	// No flag turns the refusal off.
-	if code, _, _ := runCLI(t, "serve", "--allow-root", "--config", testdata+"valid.yml"); code != 77 {
-		t.Errorf("serve --allow-root as root = %d, want 77", code)
+	if code, _, _ := runCLI(t, "serve", "--run-as-root", "--config", testdata+"valid.yml"); code != 77 {
+		t.Errorf("serve --run-as-root as root = %d, want 77", code)
 	}
 }
 
@@ -189,7 +189,7 @@ func TestServeAsAnotherUserLoadsItsConfig(t *testing.T) {
 	if code != 78 || strings.Contains(errOut, "root") {
 		t.Fatalf("exit = %d stderr = %q, want 78 from the config step", code, errOut)
 	}
-	if code, _, _ := runCLI(t, "serve", "--allow-root"); code != 2 {
-		t.Errorf("serve --allow-root = %d, want 2 (no such flag)", code)
+	if code, _, _ := runCLI(t, "serve", "--run-as-root"); code != 2 {
+		t.Errorf("serve --run-as-root = %d, want 2 (no such flag)", code)
 	}
 }

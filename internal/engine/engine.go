@@ -25,6 +25,14 @@ const (
 // Build returns the runner engine for cfg. The child is started with
 // GIT_TERMINAL_PROMPT=0, so a git that needs a password fails at once instead
 // of waiting on a terminal nobody is at.
+//
+// ssh (D-03): with engine.ssh_config set, git is told to use that file and no
+// other (ssh -F skips ~/.ssh/config and /etc/ssh/ssh_config, so a Host * block
+// elsewhere cannot override the pinned host keys). Without it the agent sets no
+// ssh command, and one inherited from the agent's own environment is removed so
+// a stray value cannot weaken pinning. git passes GIT_SSH_COMMAND through a
+// shell, so a path with anything outside [A-Za-z0-9._/-] is refused here as
+// well as by config validation (T-57.6.2-10).
 func Build(cfg config.Engine) (jobs.Engine, error) {
 	var e jobs.Engine
 	switch cfg.Name {
@@ -36,6 +44,14 @@ func Build(cfg config.Engine) (jobs.Engine, error) {
 		return jobs.Engine{}, fmt.Errorf("engine.name must be r10k or g10k, got %q", cfg.Name)
 	}
 	e.Env = []string{"GIT_TERMINAL_PROMPT=0"}
+	if cfg.SSHConfig == "" {
+		e.Unset = []string{"GIT_SSH_COMMAND"}
+		return e, nil
+	}
+	if !config.ValidSSHConfigPath(cfg.SSHConfig) {
+		return jobs.Engine{}, fmt.Errorf("engine.ssh_config must be an absolute path of letters, digits, '.', '_', '/' and '-' only, got %q", cfg.SSHConfig)
+	}
+	e.Env = append(e.Env, fmt.Sprintf("GIT_SSH_COMMAND=ssh -F %s", cfg.SSHConfig))
 	return e, nil
 }
 
