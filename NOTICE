@@ -1,0 +1,6 @@
+Stagehand deploy agent
+Copyright Puppet, Inc. (a Perforce company)
+
+Portions of this software are derived from voxpupuli/webhook-go
+(https://github.com/voxpupuli/webhook-go), licensed under the Apache License,
+Version 2.0. Files derived from it carry a header that says so.
