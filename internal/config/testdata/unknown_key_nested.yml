@@ -5,7 +5,8 @@ server:
   tls:
     certificate: /etc/puppetlabs/puppet/ssl/certs/primary.example.com.pem
     key: /run/credentials/stagehand-deploy-agent.service/server.key
-    client_cert_authority: /etc/puppetlabs/puppet/ssl/certs/ca.pem
+    client_ca: /etc/puppetlabs/puppet/ssl/certs/ca.pem
+    client_cert_authority: x
     crl: /etc/puppetlabs/puppetserver/ca/ca_crl.pem
     allowed_certnames:
       - stagehand-code-manager

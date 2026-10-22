@@ -181,6 +181,9 @@ func TestEmptyFileNamesTheMissingKeys(t *testing.T) {
 // file may exist only inside the service (PD-13).
 func TestCheckFilesWarnsInsteadOfFailing(t *testing.T) {
 	c, _ := load(t, "valid.yml")
+	// Paths that cannot exist on any host running the tests.
+	gone := filepath.Join(t.TempDir(), "absent")
+	c.Server.TLS.Certificate, c.Server.TLS.ClientCA, c.Server.TLS.CRL, c.Engine.SSHConfig = gone+"1", gone+"2", gone+"3", gone+"4"
 	fs := CheckFiles(c)
 	if len(errorsOf(fs)) != 0 {
 		t.Fatalf("CheckFiles produced errors: %+v", fs)
@@ -304,7 +307,7 @@ func TestLocate(t *testing.T) {
 	})
 	t.Run("neither file", func(t *testing.T) {
 		_, _, err := Locate("", missing, missing)
-		if err == nil || !strings.Contains(err.Error(), "no config: write /etc/stagehand-deploy-agent/config.yml") {
+		if err == nil || !strings.Contains(err.Error(), "no config: write "+missing) {
 			t.Fatalf("err = %v", err)
 		}
 	})
