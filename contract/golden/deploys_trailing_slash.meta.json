@@ -1,0 +1,7 @@
+{
+  "status": 301,
+  "headers": {
+    "Content-Type": "text/html; charset=utf-8",
+    "Location": "/api/v1/deploys"
+  }
+}

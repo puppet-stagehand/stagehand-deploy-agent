@@ -1,0 +1,104 @@
+{
+  "sha": "0123456789abcdef0123456789abcdef01234567",
+  "cases": [
+    {
+      "name": "post_wait_false",
+      "method": "POST",
+      "path": "/api/v1/deploys",
+      "body": "{\"environments\":[{\"name\":\"production\",\"expected_sha\":\"0123456789abcdef0123456789abcdef01234567\"}],\"wait\":false}"
+    },
+    {
+      "name": "post_wait_true",
+      "method": "POST",
+      "path": "/api/v1/deploys",
+      "body": "{\"environments\":[{\"name\":\"production\",\"expected_sha\":\"0123456789abcdef0123456789abcdef01234567\"}],\"wait\":true}",
+      "normalise_duration": true
+    },
+    {
+      "name": "post_name_invalid",
+      "method": "POST",
+      "path": "/api/v1/deploys",
+      "body": "{\"environments\":[{\"name\":\"Prod;rm\",\"expected_sha\":\"0123456789abcdef0123456789abcdef01234567\"}],\"wait\":false}"
+    },
+    {
+      "name": "post_sha_invalid",
+      "method": "POST",
+      "path": "/api/v1/deploys",
+      "body": "{\"environments\":[{\"name\":\"production\",\"expected_sha\":\"abc\"}],\"wait\":false}"
+    },
+    {
+      "name": "post_wait_invalid",
+      "method": "POST",
+      "path": "/api/v1/deploys",
+      "body": "{\"environments\":[{\"name\":\"production\",\"expected_sha\":\"0123456789abcdef0123456789abcdef01234567\"}],\"wait\":\"no\"}"
+    },
+    {
+      "name": "post_malformed_json",
+      "method": "POST",
+      "path": "/api/v1/deploys",
+      "body": "{\"environments\":"
+    },
+    {
+      "name": "post_oversized",
+      "method": "POST",
+      "path": "/api/v1/deploys",
+      "body": "{\"environments\":[{\"name\":\"production\",\"expected_sha\":\"0123456789abcdef0123456789abcdef01234567\"}],\"wait\":false,\"pad\":\"{{PAD}}\"}",
+      "pad": 70000
+    },
+    {
+      "name": "post_trailing_data",
+      "method": "POST",
+      "path": "/api/v1/deploys",
+      "body": "{\"environments\":[{\"name\":\"production\",\"expected_sha\":\"0123456789abcdef0123456789abcdef01234567\"}],\"wait\":false} garbage"
+    },
+    {
+      "name": "get_unknown_id",
+      "method": "GET",
+      "path": "/api/v1/deploys/00000000000000000000000000000000"
+    },
+    {
+      "name": "list_empty",
+      "method": "GET",
+      "path": "/api/v1/deploys"
+    },
+    {
+      "name": "list_one",
+      "method": "GET",
+      "path": "/api/v1/deploys",
+      "setup": "finished_job",
+      "normalise_duration": true
+    },
+    {
+      "name": "list_limit_0",
+      "method": "GET",
+      "path": "/api/v1/deploys?limit=0"
+    },
+    {
+      "name": "list_limit_101",
+      "method": "GET",
+      "path": "/api/v1/deploys?limit=101"
+    },
+    {
+      "name": "list_limit_x",
+      "method": "GET",
+      "path": "/api/v1/deploys?limit=x"
+    },
+    {
+      "name": "post_refused_shutdown",
+      "method": "POST",
+      "path": "/api/v1/deploys",
+      "body": "{\"environments\":[{\"name\":\"production\",\"expected_sha\":\"0123456789abcdef0123456789abcdef01234567\"}],\"wait\":false}",
+      "setup": "shutdown"
+    },
+    {
+      "name": "unknown_path",
+      "method": "GET",
+      "path": "/api/v1/nope"
+    },
+    {
+      "name": "deploys_trailing_slash",
+      "method": "GET",
+      "path": "/api/v1/deploys/"
+    }
+  ]
+}

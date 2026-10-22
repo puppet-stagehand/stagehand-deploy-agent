@@ -1,0 +1,204 @@
+package api
+
+// Throwaway recorder for the stagehand-deploy-agent golden corpus (plan
+// 57.6.2-02). It is NOT part of the fork and NOT compiled by the agent: it is
+// stored with a .txt suffix, and hack/record-golden.sh copies it into a
+// `git archive` of the fork tag v2.15.1-stagehand.1 as api/record_test.go, runs
+// it there, and throws the copy away.
+//
+// It drives the fork's own gin handlers (newDeploysController + gin.New) over a
+// real HTTP listener with the fork's own fake r10k, and writes one
+// <case>.meta.json and one <case>.body per case into $GOLDEN_OUT. The cases
+// (method, path, body, setup) come from $GOLDEN_OUT/cases.json, the same file
+// the agent's replay test reads, so both sides send the same bytes.
+//
+// Normalisation, kept in step with contract/golden_test.go and nothing more:
+//   - every 32-hex id becomes <id> (also in the Location header); the match is
+//     word-bounded so a 40-hex commit SHA is left alone;
+//   - every non-zero RFC3339 value of created_at / started_at / finished_at
+//     becomes <time>; the zero time 0001-01-01T00:00:00Z stays literal;
+//   - for cases flagged normalise_duration, a duration_ms integer becomes <ms>.
+// Whitespace and every other byte are recorded as the fork wrote them.
+
+import (
+	"bytes"
+	"encoding/json"
+	"io"
+	"net/http"
+	"net/http/httptest"
+	"os"
+	"path/filepath"
+	"regexp"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/gin-gonic/gin"
+	"github.com/voxpupuli/webhook-go/lib/jobs"
+	"github.com/voxpupuli/webhook-go/lib/jobs/fakeengine"
+)
+
+type recCase struct {
+	Name              string `json:"name"`
+	Method            string `json:"method"`
+	Path              string `json:"path"`
+	Body              string `json:"body"`
+	Pad               int    `json:"pad"`
+	Setup             string `json:"setup"`
+	NormaliseDuration bool   `json:"normalise_duration"`
+}
+
+type recCases struct {
+	SHA   string    `json:"sha"`
+	Cases []recCase `json:"cases"`
+}
+
+type recMeta struct {
+	Status  int               `json:"status"`
+	Headers map[string]string `json:"headers"`
+}
+
+var (
+	recIDRE   = regexp.MustCompile(`\b[0-9a-f]{32}\b`)
+	recTimeRE = regexp.MustCompile(`"(created_at|started_at|finished_at)":"([^"]+)"`)
+	recDurRE  = regexp.MustCompile(`"duration_ms":[0-9]+`)
+)
+
+const recZeroTime = "0001-01-01T00:00:00Z"
+
+func recNormalise(b []byte, durations bool) []byte {
+	b = recIDRE.ReplaceAll(b, []byte("<id>"))
+	b = recTimeRE.ReplaceAllFunc(b, func(m []byte) []byte {
+		sub := recTimeRE.FindSubmatch(m)
+		if string(sub[2]) == recZeroTime {
+			return m
+		}
+		return []byte(`"` + string(sub[1]) + `":"<time>"`)
+	})
+	if durations {
+		b = recDurRE.ReplaceAll(b, []byte(`"duration_ms":<ms>`))
+	}
+	return b
+}
+
+func TestRecordGolden(t *testing.T) {
+	out := os.Getenv("GOLDEN_OUT")
+	if out == "" {
+		t.Skip("GOLDEN_OUT not set")
+	}
+	raw, err := os.ReadFile(filepath.Join(out, "cases.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var cs recCases
+	if err := json.Unmarshal(raw, &cs); err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range cs.Cases {
+		c := c
+		t.Run(c.Name, func(t *testing.T) { recordOne(t, out, cs.SHA, c) })
+	}
+}
+
+func recordOne(t *testing.T, out, sha string, c recCase) {
+	gin.SetMode(gin.TestMode)
+	exe, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	basedir := t.TempDir()
+	fixture, _ := filepath.Abs("../lib/jobs/testdata/r10k-5.0.3/deploy-success.json")
+	t.Setenv(fakeengine.FixtureEnv, fixture)
+	t.Setenv(fakeengine.BasedirEnv, basedir)
+	t.Setenv(fakeengine.SHAEnv, sha)
+
+	runner, err := jobs.NewRunner(jobs.Options{
+		Engine: jobs.R10kEngine(func(env string) []string {
+			return []string{exe, "deploy", "environment", env, "--config=/etc/puppetlabs/r10k/r10k.yaml"}
+		}),
+		Basedir:     basedir,
+		Timeout:     time.Minute,
+		OutputLimit: 4096,
+		Store:       jobs.NewMemoryStore(10),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	d := newDeploysController(runner)
+	r := gin.New()
+	d.Register(r.Group("/api/v1"))
+	srv := httptest.NewServer(r)
+	t.Cleanup(func() {
+		srv.Close()
+		if c.Setup != "shutdown" {
+			_ = d.Shutdown(10 * time.Second)
+		}
+	})
+	client := &http.Client{CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
+
+	switch c.Setup {
+	case "":
+	case "finished_job":
+		resp, err := client.Post(srv.URL+"/api/v1/deploys", "application/json",
+			strings.NewReader(`{"environments":[{"name":"production","expected_sha":"`+sha+`"}],"wait":true}`))
+		if err != nil {
+			t.Fatal(err)
+		}
+		io.Copy(io.Discard, resp.Body)
+		resp.Body.Close()
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("setup deploy status = %d", resp.StatusCode)
+		}
+	case "shutdown":
+		if err := d.Shutdown(time.Second); err != nil {
+			t.Fatal(err)
+		}
+	default:
+		t.Fatalf("unknown setup %q", c.Setup)
+	}
+
+	body := c.Body
+	if c.Pad > 0 {
+		body = strings.Replace(body, "{{PAD}}", strings.Repeat("x", c.Pad), 1)
+	}
+	var rdr io.Reader
+	if c.Method == http.MethodPost {
+		rdr = bytes.NewBufferString(body)
+	}
+	req, err := http.NewRequest(c.Method, srv.URL+c.Path, rdr)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.Method == http.MethodPost {
+		req.Header.Set("Content-Type", "application/json")
+	}
+	resp, err := client.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	meta := recMeta{Status: resp.StatusCode, Headers: map[string]string{}}
+	for _, h := range []string{"Content-Type", "Location", "Retry-After"} {
+		if v := resp.Header.Get(h); v != "" {
+			meta.Headers[h] = string(recIDRE.ReplaceAll([]byte(v), []byte("<id>")))
+		}
+	}
+	var mb bytes.Buffer
+	enc := json.NewEncoder(&mb)
+	enc.SetEscapeHTML(false) // keep <id> readable in the stored file
+	enc.SetIndent("", "  ")
+	if err := enc.Encode(meta); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(out, c.Name+".meta.json"), mb.Bytes(), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(out, c.Name+".body"), recNormalise(got, c.NormaliseDuration), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
