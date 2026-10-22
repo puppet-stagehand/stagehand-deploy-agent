@@ -1,0 +1,7 @@
+# Only what mTLS mode needs; everything else is the fork's default.
+server:
+  tls:
+    certificate: /etc/puppetlabs/puppet/ssl/certs/primary.example.com.pem
+    key: /etc/puppetlabs/puppet/ssl/private_keys/primary.example.com.pem
+    client_ca: /etc/puppetlabs/puppet/ssl/certs/ca.pem
+    allowed_certnames: [stagehand-code-manager]

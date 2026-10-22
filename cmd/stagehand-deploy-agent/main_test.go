@@ -119,3 +119,42 @@ func TestVersionPrints(t *testing.T) {
 		t.Fatalf("exit = %d out = %q", code, out)
 	}
 }
+
+// The fork's unedited build/webhook.yml sets server.protected: true, so it
+// refuses; --legacy lets --check-config read a legacy file at another path.
+func TestCheckConfigLegacyShippedFileRefuses(t *testing.T) {
+	notRoot(t)
+	code, out, _ := runCLI(t, "--check-config", "--config", testdata+"legacy_shipped.yml", "--legacy")
+	if code != 78 || !strings.Contains(out, "ERROR server.protected: ") || !strings.Contains(out, "ERROR server.tls.client_ca: ") {
+		t.Fatalf("exit = %d\n%s", code, out)
+	}
+	if !strings.Contains(out, "WARNING config: using legacy config /etc/voxpupuli/webhook.yml") {
+		t.Fatalf("no fallback warning:\n%s", out)
+	}
+}
+
+func TestCheckConfigLegacyModuleFileIsAccepted(t *testing.T) {
+	notRoot(t)
+	code, out, _ := runCLI(t, "--check-config", "--config", testdata+"legacy_module.yml", "--legacy")
+	if code != 0 || !strings.Contains(out, "1.2.0") || !strings.Contains(lastLine(out), "0 error(s)") {
+		t.Fatalf("exit = %d\n%s", code, out)
+	}
+}
+
+// Without --legacy the same file is read as a native one, and is refused.
+func TestCheckConfigReadsAnExplicitFileAsNative(t *testing.T) {
+	notRoot(t)
+	code, out, _ := runCLI(t, "--check-config", "--config", testdata+"legacy_module.yml")
+	if code != 78 || !strings.Contains(out, "ERROR r10k: unknown key") {
+		t.Fatalf("exit = %d\n%s", code, out)
+	}
+}
+
+// --legacy exists for --check-config only: serve reaches the legacy reader
+// through config.Locate alone.
+func TestServeLegacyFlagIsAUsageError(t *testing.T) {
+	notRoot(t)
+	if code, _, _ := runCLI(t, "serve", "--legacy", "--config", testdata+"legacy_module.yml"); code != 2 {
+		t.Fatalf("serve --legacy exit = %d, want 2", code)
+	}
+}

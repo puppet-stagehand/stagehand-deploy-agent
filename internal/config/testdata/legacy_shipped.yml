@@ -1,0 +1,68 @@
+server:
+  protected: true
+  user: puppet
+  password: puppet
+  port: 4000
+  tls:
+    enabled: false
+    certificate: ""
+    key: ""
+chatops:
+  enabled: false
+  service: slack
+  channel: "#general"
+  user: r10kbot
+  auth_token: 12345
+  server_uri: "https://rocketchat.local"
+r10k:
+  config_path: /etc/puppetlabs/r10k/r10k.yaml
+  default_branch: webhook_test
+  allow_uppercase: false
+  verbose: true
+  generate_types: false
+mappings: []
+
+# --- Stagehand mTLS deploys (puppet-stagehand fork) ---------------------------
+# Uncomment to switch this server to mTLS-only mode. Setting client_ca turns it
+# on; the server then refuses to start unless allowed_certnames lists at least
+# one certname and tls.certificate and tls.key are set (tls.enabled is not
+# consulted in this mode). In mTLS mode the git-provider webhook routes
+# (/api/v1/r10k/*) are not served; POST /api/v1/deploys is the only way to
+# deploy ("wait": false answers 202 at once and the client polls; "wait": true
+# answers when the deploy has finished), and GET /api/v1/deploys/<id> and
+# GET /api/v1/deploys?limit=N read the results back. One deploy runs at a
+# time, also across processes. This file is installed as config|noreplace, so
+# upgrades never overwrite your edits.
+#
+# server:
+#   tls:
+#     # The Puppet CA bundle client certificates must chain to. Default: "" (mTLS off).
+#     client_ca: /etc/puppetlabs/puppet/ssl/certs/ca.pem
+#     # Certnames (certificate Subject CN) allowed to call the API. Default: [] (required with client_ca).
+#     # Never autosign a certname listed here.
+#     allowed_certnames:
+#       - stagehand-code-manager
+#     # The CA's revocation list; a revoked client certificate is refused, and a changed file is re-read within a minute. On the CA host use /etc/puppetlabs/puppetserver/ca/ca_crl.pem so `puppetserver ca revoke` takes effect at once. Default: "" (no CRL check).
+#     crl: /etc/puppetlabs/puppetserver/ca/ca_crl.pem
+#     # Optional pin: when set, a client certificate's SHA-256 fingerprint (as `puppetserver ca list --all` prints it) must also be listed. Default: [] (no pin).
+#     allowed_fingerprints:
+#       - "AB:CD:...:EF"
+#     # The server's own certificate and key; use this host's Puppet certificate.
+#     certificate: /etc/puppetlabs/puppet/ssl/certs/<this host's certname>.pem
+#     key: /etc/puppetlabs/puppet/ssl/private_keys/<this host's certname>.pem
+#
+# deploys:
+#   # Where environments live; each environment's deploy marker is read from here.
+#   basedir: /etc/puppetlabs/code/environments
+#   # Where deploy state is kept: job records (jobs/, mode 0600) and the deploy lock (deploy.lock). Must be absolute.
+#   state_dir: /var/lib/webhook-go
+#   # How many job records to keep; the oldest finished ones beyond this are deleted.
+#   max_jobs: 500
+#   # How long one environment's r10k or g10k run may take before it is stopped.
+#   timeout: 15m
+#   # Bytes of engine output kept per environment (the end of the output is kept).
+#   output_limit: 262144
+#
+# On Puppet Core, r10k installed with puppet_gem lives at
+# /opt/puppetlabs/puppet/bin/r10k, not the built-in PE default
+# /opt/puppetlabs/puppetserver/bin/r10k; set r10k.command_path to match.

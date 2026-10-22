@@ -1,0 +1,29 @@
+# Managed by Puppet (stagehand::webhook). Local edits are overwritten on the next agent run.
+# Stagehand fork of webhook-go: mTLS deploy API for the Advanced Code Manager pack.
+# (Shape of the output of stagehand-module templates/webhook/webhook.yml.epp.)
+---
+server:
+  port: 8088
+  tls:
+    enabled: true
+    # Setting client_ca switches the fork to mTLS-only mode; it then refuses to
+    # start without a server certificate and key and a non-empty allow-list.
+    certificate: '/etc/puppetlabs/puppet/ssl/certs/primary.example.com.pem'
+    key: '/etc/puppetlabs/puppet/ssl/private_keys/primary.example.com.pem'
+    crl: '/etc/puppetlabs/puppetserver/ca/ca_crl.pem'
+    allowed_certnames:
+      - 'stagehand-code-manager'
+    allowed_fingerprints: []
+r10k:
+  command_path: '/opt/puppetlabs/puppet/bin/r10k'
+  config_path: '/etc/puppetlabs/r10k/r10k.yaml'
+  use_g10k_commands: false
+deploys:
+  basedir: '/etc/puppetlabs/code/environments'
+  # Job records and the cross-process deploy lock live here (0700, root).
+  state_dir: '/var/lib/webhook-go'
+  timeout: '15m'
+  # Bytes of engine output kept per environment (the tail).
+  output_limit: 262144
+  # Job records kept; the oldest finished ones beyond this are deleted.
+  max_jobs: 500
