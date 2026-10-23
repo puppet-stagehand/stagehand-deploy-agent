@@ -430,8 +430,18 @@ func (s *FileStore) readStoredLocked(id string) (storedJob, error) {
 	return rec, nil
 }
 
-// List returns up to limit jobs (at most MaxListLimit), newest first.
+// List returns up to limit jobs of every kind (at most MaxListLimit), newest first.
 func (s *FileStore) List(limit int) ([]Job, error) {
+	return s.list(limit, func(Job) bool { return true })
+}
+
+// ListKind returns up to limit jobs whose Kind is kind (at most MaxListLimit),
+// newest first. The limit applies after the kind is chosen.
+func (s *FileStore) ListKind(kind string, limit int) ([]Job, error) {
+	return s.list(limit, func(j Job) bool { return j.Kind == kind })
+}
+
+func (s *FileStore) list(limit int, keep func(Job) bool) ([]Job, error) {
 	if limit > MaxListLimit {
 		limit = MaxListLimit
 	}
@@ -444,10 +454,16 @@ func (s *FileStore) List(limit int) ([]Job, error) {
 	if limit < 0 {
 		limit = 0
 	}
-	if len(all) > limit {
-		all = all[:limit]
+	out := []Job{}
+	for _, j := range all {
+		if len(out) == limit {
+			break
+		}
+		if keep(j) {
+			out = append(out, j)
+		}
 	}
-	return all, nil
+	return out, nil
 }
 
 // allLocked reads every record, newest first. A corrupt record is logged and
@@ -491,23 +507,24 @@ func (s *FileStore) allStoredLocked() ([]storedJob, error) {
 	return out, nil
 }
 
-// pruneLocked deletes the oldest finished records beyond maxJobs, and the
-// oldest refused records beyond MaxRefusedRecords. Refused records do not
-// count toward maxJobs, and unfinished jobs are never deleted.
+// pruneLocked deletes the oldest finished records beyond maxJobs of their kind,
+// and the oldest refused records beyond MaxRefusedRecords. Deploys and removals
+// are counted apart, so a run of removals cannot push deploy history out, and
+// refused records count toward neither. Unfinished jobs are never deleted.
 func (s *FileStore) pruneLocked() {
 	all, err := s.allStoredLocked()
 	if err != nil {
 		s.log.Error("retention", "error", err.Error())
 		return
 	}
-	deploys, refused := 0, 0
+	kept, refused := map[string]int{}, 0
 	for _, rec := range all { // newest first
 		if rec.Refused {
 			if refused++; refused <= MaxRefusedRecords {
 				continue
 			}
 		} else {
-			if deploys++; deploys <= s.maxJobs || !rec.State.Terminal() {
+			if kept[rec.Kind]++; kept[rec.Kind] <= s.maxJobs || !rec.State.Terminal() {
 				continue
 			}
 		}
@@ -516,6 +533,3 @@ func (s *FileStore) pruneLocked() {
 		}
 	}
 }
-
-// ListKind is a stub until the GREEN commit.
-func (s *FileStore) ListKind(kind string, limit int) ([]Job, error) { return s.List(limit) }

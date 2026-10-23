@@ -175,27 +175,29 @@ func (s *MemoryStore) save(job Job, refused bool) error {
 	return nil
 }
 
-// evictLocked drops the oldest finished records beyond max and the oldest
-// refused records beyond MaxRefusedRecords.
+// evictLocked drops the oldest finished records beyond max of their kind (a
+// deploy and a removal are counted apart, so removals never push deploy
+// history out) and the oldest refused records beyond MaxRefusedRecords.
 func (s *MemoryStore) evictLocked() {
-	finished, refused := 0, 0
+	finished, refused := map[string]int{}, 0
 	for _, id := range s.order {
 		switch {
 		case s.refused[id]:
 			refused++
 		case s.jobs[id].State == "" || s.jobs[id].State.Terminal():
-			finished++
+			finished[s.jobs[id].Kind]++
 		}
 	}
 	keep := s.order[:0]
 	for _, id := range s.order {
+		kind := s.jobs[id].Kind
 		switch {
 		case s.refused[id] && refused > MaxRefusedRecords:
 			refused--
 			delete(s.jobs, id)
 			delete(s.refused, id)
-		case !s.refused[id] && (s.jobs[id].State == "" || s.jobs[id].State.Terminal()) && finished > s.max:
-			finished--
+		case !s.refused[id] && (s.jobs[id].State == "" || s.jobs[id].State.Terminal()) && finished[kind] > s.max:
+			finished[kind]--
 			delete(s.jobs, id)
 		default:
 			keep = append(keep, id)
@@ -215,14 +217,21 @@ func (s *MemoryStore) Get(id string) (Job, error) {
 }
 
 func (s *MemoryStore) List(limit int) ([]Job, error) {
+	return s.list(limit, func(Job) bool { return true })
+}
+
+func (s *MemoryStore) ListKind(kind string, limit int) ([]Job, error) {
+	return s.list(limit, func(j Job) bool { return j.Kind == kind })
+}
+
+func (s *MemoryStore) list(limit int, keep func(Job) bool) ([]Job, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	out := []Job{}
 	for i := len(s.order) - 1; i >= 0 && len(out) < limit; i-- {
-		out = append(out, s.jobs[s.order[i]].clone())
+		if j := s.jobs[s.order[i]]; keep(j) {
+			out = append(out, j.clone())
+		}
 	}
 	return out, nil
 }
-
-// ListKind is a stub until the GREEN commit.
-func (s *MemoryStore) ListKind(kind string, limit int) ([]Job, error) { return s.List(limit) }

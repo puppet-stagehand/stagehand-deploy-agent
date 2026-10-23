@@ -14,8 +14,13 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 )
+
+// sweepLockWait bounds how long SweepRemovals waits for the deploy lock at
+// start: another agent process on the same state directory may be deploying.
+const sweepLockWait = 10 * time.Second
 
 // removingPrefix starts the name an environment is renamed to while it is
 // deleted: <basedir>/.removing-<env>-<jobid>. A leading dot is not a valid
@@ -91,5 +96,42 @@ func (r *Runner) removeOne(ctx context.Context, res EnvResult, jobID string) Env
 	return finish(StateDeployed, 0, "")
 }
 
-// SweepRemovals is a stub until the GREEN commit.
-func (r *Runner) SweepRemovals() (int, error) { return 0, nil }
+// SweepRemovals deletes the <basedir>/.removing-* directories a crash between
+// the rename and the delete left behind, and returns how many it deleted. Only
+// real directories are touched: it looks at each entry without following links,
+// so a symlink or a file with such a name is logged and left alone. It takes
+// the deploy lock, so it cannot run under another process's removal; if the
+// lock stays busy for sweepLockWait it gives up with an error and the leftovers
+// wait for the next start. The server calls it once at start, after the store
+// is reconciled and before requests are accepted.
+func (r *Runner) SweepRemovals() (int, error) {
+	ctx, cancel := context.WithTimeout(r.ctx, sweepLockWait)
+	defer cancel()
+	release, err := r.lock.Acquire(ctx)
+	if err != nil {
+		return 0, fmt.Errorf("sweeping removals: waiting for the deploy lock: %w", err)
+	}
+	defer release()
+	entries, err := os.ReadDir(r.opts.Basedir)
+	if err != nil {
+		return 0, fmt.Errorf("sweeping removals: %w", err)
+	}
+	n := 0
+	for _, e := range entries {
+		if !strings.HasPrefix(e.Name(), removingPrefix) {
+			continue
+		}
+		path := filepath.Join(r.opts.Basedir, e.Name())
+		if !e.Type().IsDir() { // DirEntry types come from Lstat: a symlink is not a directory
+			r.log.Warn("left a non-directory named like a removal leftover alone", "path", path)
+			continue
+		}
+		if err := os.RemoveAll(path); err != nil {
+			r.log.Error("could not delete a removal leftover", "path", path, "error", err.Error())
+			continue
+		}
+		r.log.Info("deleted a removal leftover", "path", path)
+		n++
+	}
+	return n, nil
+}

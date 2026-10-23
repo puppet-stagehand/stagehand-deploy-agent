@@ -3,7 +3,8 @@
 # agent with a strict YAML config, deploy one environment over mutual TLS with
 # an allow-listed client certificate, poll until the record reads "deployed",
 # and check that a certificate whose certname is not allow-listed is refused in
-# the TLS handshake. Prints "SMOKE OK" as its last line, or
+# the TLS handshake. It also removes an environment (DELETE) and checks that the
+# protected default, production, is refused. Prints "SMOKE OK" as its last line, or
 # "SMOKE FAIL: <step>" and exits 1.
 set -eu
 
@@ -137,6 +138,46 @@ while :; do
 	sleep 0.1
 done
 grep -q "\"deployed_sha\":\"$SHA\"" get.json
+
+STEP="DELETE a protected environment is refused with 403"
+CODE=$(mtls -o protected.json -w '%{http_code}' -X DELETE "$URL/api/v1/environments/production")
+[ "$CODE" = 403 ]
+grep -qx '{"error":"environment production is protected","field":"environment"}' protected.json
+[ -d "$TMP/environments/production" ]
+
+STEP="POST /api/v1/deploys feature_x"
+CODE=$(mtls -o post2.json -w '%{http_code}' -X POST \
+	-H 'Content-Type: application/json' \
+	-d "{\"environments\":[{\"name\":\"feature_x\",\"expected_sha\":\"$SHA\"}],\"wait\":true}" \
+	"$URL/api/v1/deploys")
+[ "$CODE" = 200 ]
+grep -q '"state":"deployed","created_at"' post2.json
+[ -d "$TMP/environments/feature_x" ]
+
+STEP="DELETE /api/v1/environments/feature_x"
+CODE=$(mtls -o del.json -D del.headers -w '%{http_code}' -X DELETE "$URL/api/v1/environments/feature_x")
+[ "$CODE" = 202 ]
+RID=$(sed -n 's/.*"id":"\([0-9a-f]\{32\}\)".*/\1/p' del.json)
+[ -n "$RID" ]
+grep -q '"kind":"remove"' del.json
+grep -qi "^location: /api/v1/removals/$RID" del.headers
+
+STEP="GET /api/v1/removals/$RID reaches deployed"
+i=0
+while :; do
+	mtls -o rem.json "$URL/api/v1/removals/$RID"
+	if grep -q '"state":"deployed","created_at"' rem.json; then break; fi
+	if grep -q '"state":"failed","created_at"' rem.json; then cat rem.json; exit 1; fi
+	i=$((i + 1))
+	[ "$i" -lt 300 ] || exit 1
+	sleep 0.1
+done
+[ ! -e "$TMP/environments/feature_x" ]
+if ls -A "$TMP/environments" | grep -q '^\.removing-'; then exit 1; fi
+
+STEP="a removal is not listed as a deploy"
+CODE=$(mtls -o gone.json -w '%{http_code}' "$URL/api/v1/deploys/$RID")
+[ "$CODE" = 404 ]
 
 STEP="a non-listed certname must be refused in the handshake"
 set +e

@@ -160,6 +160,14 @@ func runServe(cfg *config.Config, log *slog.Logger) error {
 	if err != nil {
 		return err
 	}
+	// OptionsFromConfig has reconciled the store; now delete what a crash in the
+	// middle of an environment removal left behind, before any request is
+	// accepted (D-09).
+	if n, err := opts.Runner.SweepRemovals(); err != nil {
+		log.Warn("removal leftovers were not swept; they stay until the next start", "component", "server", "error", err.Error())
+	} else {
+		log.Info("removal leftovers swept", "component", "server", "deleted", n)
+	}
 	srv, err := server.New(opts)
 	if err != nil {
 		_ = opts.Store.Close()

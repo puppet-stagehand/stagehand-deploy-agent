@@ -191,10 +191,15 @@ func (h *DeployHandlers) get(w http.ResponseWriter, r *http.Request) {
 		failure(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	if job.Kind != "" { // a removal is polled under /api/v1/removals (PD-21)
+		failure(w, http.StatusNotFound, "deploy not found")
+		return
+	}
 	writeJSON(w, http.StatusOK, job)
 }
 
-// list answers the newest job records.
+// list answers the newest deploy records. Removals are not deploys and are
+// left out (ListKind, PD-21).
 func (h *DeployHandlers) list(w http.ResponseWriter, r *http.Request) {
 	limit := defaultListLimit
 	if q := r.URL.Query(); q.Has("limit") {
@@ -205,7 +210,7 @@ func (h *DeployHandlers) list(w http.ResponseWriter, r *http.Request) {
 		}
 		limit = n
 	}
-	list, err := h.runner.Store().List(limit)
+	list, err := h.runner.Store().ListKind("", limit)
 	if err != nil {
 		failure(w, http.StatusInternalServerError, err.Error())
 		return
