@@ -51,6 +51,7 @@ type deployRecord struct {
 }
 
 type tracer struct {
+	srv     *Server
 	f       *mtlsFixture
 	url     string
 	client  *http.Client
@@ -84,6 +85,13 @@ deploys:
 
 func newTracer(t *testing.T) *tracer {
 	t.Helper()
+	return newTracerWith(t, "")
+}
+
+// newTracerWith is newTracer with extra top-level YAML (an ops: block, for
+// instance) after the engine block.
+func newTracerWith(t *testing.T, extraTop string) *tracer {
+	t.Helper()
 	exe, err := os.Executable()
 	if err != nil {
 		t.Fatal(err)
@@ -100,7 +108,7 @@ engine:
   config_path: /etc/puppetlabs/r10k/r10k.yaml
   verbose: false
   generate_types: false
-`, basedir, exe))
+`+extraTop, basedir, exe))
 
 	t.Setenv(fakeengine.FixtureEnv, fixture)
 	t.Setenv(fakeengine.BasedirEnv, basedir)
@@ -125,7 +133,7 @@ engine:
 	hits := &countingHandler{next: srv.HTTPServer().Handler}
 	srv.HTTPServer().Handler = hits
 
-	tr := &tracer{f: f, argvLog: argvLog, basedir: basedir, hits: hits}
+	tr := &tracer{srv: srv, f: f, argvLog: argvLog, basedir: basedir, hits: hits}
 	tr.url = serveOn(t, srv.HTTPServer())
 	tr.client = f.client(t, clientCert(t, f.ca, "stagehand-code-manager"))
 	return tr

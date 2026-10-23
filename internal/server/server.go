@@ -14,6 +14,7 @@ import (
 	"github.com/puppet-stagehand/stagehand-deploy-agent/internal/config"
 	"github.com/puppet-stagehand/stagehand-deploy-agent/internal/engine"
 	"github.com/puppet-stagehand/stagehand-deploy-agent/internal/jobs"
+	"github.com/puppet-stagehand/stagehand-deploy-agent/internal/metrics"
 	"github.com/puppet-stagehand/stagehand-deploy-agent/internal/ops"
 )
 
@@ -45,6 +46,9 @@ type Options struct {
 	// are what /readyz checks the engine and the writable directory against.
 	EnginePath      string
 	EnvironmentsDir string
+	// Metrics is the registry the middleware, the handshake and the ops
+	// listener report to. Nil means a private one.
+	Metrics *metrics.Registry
 }
 
 // Server is the mTLS deploy API.

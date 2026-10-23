@@ -33,6 +33,9 @@ type TLSConfig struct {
 	Certificate, Key, ClientCA, CRL string
 	AllowedCertnames                []string
 	AllowedFingerprints             []string
+	// RefusalCounter, when set, is called with "certname", "revoked" or
+	// "fingerprint" each time the handshake refuses a client certificate.
+	RefusalCounter func(reason string)
 }
 
 var (

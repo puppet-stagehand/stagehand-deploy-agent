@@ -98,6 +98,9 @@ type Options struct {
 	// LockPath is the cross-process deploy lock file, normally
 	// <state_dir>/deploy.lock. Empty locks within this process only (tests).
 	LockPath string
+	// Observer is told what the runner does (metrics implement it). Nil
+	// means nobody is told.
+	Observer Observer
 	// Context is the runner's base context, normally the server's: when it
 	// is cancelled, running engines are stopped and queued jobs fail. Nil
 	// means context.Background().
@@ -492,3 +495,16 @@ func (b *tailBuffer) snapshot() (string, bool) {
 	defer b.mu.Unlock()
 	return string(b.buf), b.truncated
 }
+
+// Observer is told what the runner does.
+type Observer interface {
+	JobStarted(kind string)
+	JobFinished(kind, outcome string, d time.Duration)
+	Refused(kind, reason string)
+	Queue(queued, inFlight int)
+}
+
+// ObserveRefusal reports a request refused before it became a job.
+func (r *Runner) ObserveRefusal(kind, reason string) {}
+
+func refusalReason(err error) string { return "" }
