@@ -161,3 +161,9 @@ func (c *crlSet) Revoked(cert *x509.Certificate) bool {
 	_, ok := c.revoked[revocationKey(cert.RawIssuer, cert.SerialNumber)]
 	return ok
 }
+
+// NextUpdate is the earliest NextUpdate of the CRLs last loaded.
+func (c *crlSet) NextUpdate() time.Time { return time.Time{} }
+
+// Readable reports whether the CRL file can still be read.
+func (c *crlSet) Readable() error { return nil }

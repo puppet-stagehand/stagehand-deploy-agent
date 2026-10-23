@@ -32,6 +32,9 @@ type Options struct {
 	// means nothing to close.
 	Store  io.Closer
 	Logger *slog.Logger
+	// OpsListen is the plain-HTTP ops listener address (ops.listen). Empty
+	// means no ops listener.
+	OpsListen string
 }
 
 // Server is the mTLS deploy API.

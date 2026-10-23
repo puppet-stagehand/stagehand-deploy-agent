@@ -185,3 +185,60 @@ func TestStartRefusesUnparseableCRL(t *testing.T) {
 		}
 	})
 }
+
+// TestCRLNextUpdateAndReadable: readiness asks the CRL set when its list
+// expires and whether the file can still be read (D-07).
+func TestCRLNextUpdateAndReadable(t *testing.T) {
+	f := newMTLSFixture(t, "stagehand-code-manager")
+	crlPath := writeFile(t, f.dir, "crl.pem", f.ca.crlPEM(t))
+	caPEM := f.ca.pem
+	clock := &fakeClock{t: time.Now()}
+	c, err := loadCRL(crlPath, caPEM, clock.Now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if d := time.Until(c.NextUpdate()); d < 23*time.Hour || d > 25*time.Hour {
+		t.Fatalf("NextUpdate is %v from now, want about 24h", d)
+	}
+	if err := c.Readable(); err != nil {
+		t.Fatalf("Readable = %v for a good file", err)
+	}
+
+	// A broken replacement: the last good list stays in force, but the file is
+	// not readable as a CRL, and readiness must say so.
+	if err := os.WriteFile(crlPath, []byte("garbage"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	later := time.Now().Add(time.Hour)
+	if err := os.Chtimes(crlPath, later, later); err != nil {
+		t.Fatal(err)
+	}
+	clock.Advance(2 * time.Minute)
+	if err := c.Readable(); err == nil {
+		t.Fatal("Readable = nil for a file that no longer parses")
+	}
+	if d := time.Until(c.NextUpdate()); d < 23*time.Hour {
+		t.Fatalf("NextUpdate lost the last good list: %v", d)
+	}
+
+	// A good file again clears it.
+	if err := os.WriteFile(crlPath, f.ca.crlPEM(t), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	later = later.Add(time.Hour)
+	if err := os.Chtimes(crlPath, later, later); err != nil {
+		t.Fatal(err)
+	}
+	clock.Advance(2 * time.Minute)
+	if err := c.Readable(); err != nil {
+		t.Fatalf("Readable = %v after a good file replaced the bad one", err)
+	}
+
+	// A deleted file is unreadable.
+	if err := os.Remove(crlPath); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.Readable(); err == nil {
+		t.Fatal("Readable = nil for a deleted file")
+	}
+}

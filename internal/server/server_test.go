@@ -36,8 +36,22 @@ type serveRig struct {
 	started time.Time
 }
 
-func startServeRig(t *testing.T, engineDelay string) *serveRig {
+// rigMod adjusts what startServeRig builds: wrapStore wraps the runner's store
+// (the FileStore itself is still what Serve closes), options edits the server
+// Options before New.
+type rigMod func(*rigConfig)
+
+type rigConfig struct {
+	wrapStore func(jobs.Store) jobs.Store
+	options   func(*Options)
+}
+
+func startServeRig(t *testing.T, engineDelay string, mods ...rigMod) *serveRig {
 	t.Helper()
+	var rc rigConfig
+	for _, m := range mods {
+		m(&rc)
+	}
 	exe, err := os.Executable()
 	if err != nil {
 		t.Fatal(err)
@@ -57,6 +71,10 @@ func startServeRig(t *testing.T, engineDelay string) *serveRig {
 	if err != nil {
 		t.Fatal(err)
 	}
+	var runnerStore jobs.Store = store
+	if rc.wrapStore != nil {
+		runnerStore = rc.wrapStore(store)
+	}
 	runner, err := jobs.NewRunner(jobs.Options{
 		Engine: jobs.R10kEngine(func(env string) []string {
 			return []string{exe, "deploy", "environment", env, "--config=/etc/puppetlabs/r10k/r10k.yaml"}
@@ -64,7 +82,7 @@ func startServeRig(t *testing.T, engineDelay string) *serveRig {
 		Basedir:     basedir,
 		Timeout:     5 * time.Minute,
 		OutputLimit: 4096,
-		Store:       store,
+		Store:       runnerStore,
 		Logger:      log,
 		LockPath:    filepath.Join(f.stateDir, "deploy.lock"),
 	})
@@ -72,7 +90,11 @@ func startServeRig(t *testing.T, engineDelay string) *serveRig {
 		t.Fatal(err)
 	}
 	addr := "127.0.0.1:" + strconv.Itoa(freePort(t))
-	srv, err := New(Options{Addr: addr, TLS: f.tls, Runner: runner, Store: store, Logger: log})
+	opts := Options{Addr: addr, TLS: f.tls, Runner: runner, Store: store, Logger: log}
+	if rc.options != nil {
+		rc.options(&opts)
+	}
+	srv, err := New(opts)
 	if err != nil {
 		t.Fatal(err)
 	}
