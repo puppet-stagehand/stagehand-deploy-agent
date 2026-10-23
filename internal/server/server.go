@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"net"
 	"net/http"
 	"path/filepath"
 	"time"
@@ -13,11 +14,16 @@ import (
 	"github.com/puppet-stagehand/stagehand-deploy-agent/internal/config"
 	"github.com/puppet-stagehand/stagehand-deploy-agent/internal/engine"
 	"github.com/puppet-stagehand/stagehand-deploy-agent/internal/jobs"
+	"github.com/puppet-stagehand/stagehand-deploy-agent/internal/ops"
 )
 
 // shutdownGrace bounds how long a stopping server waits for requests to end
 // and for deploy records to be written.
 const shutdownGrace = 30 * time.Second
+
+// opsShutdownGrace bounds how long the ops listener waits for a probe or a
+// scrape in flight once everything else has stopped.
+const opsShutdownGrace = 5 * time.Second
 
 // Options assemble a Server.
 type Options struct {
@@ -35,6 +41,10 @@ type Options struct {
 	// OpsListen is the plain-HTTP ops listener address (ops.listen). Empty
 	// means no ops listener.
 	OpsListen string
+	// EnginePath (engine.command_path) and EnvironmentsDir (deploys.basedir)
+	// are what /readyz checks the engine and the writable directory against.
+	EnginePath      string
+	EnvironmentsDir string
 }
 
 // Server is the mTLS deploy API.
@@ -43,6 +53,12 @@ type Server struct {
 	runner *jobs.Runner
 	store  io.Closer
 	log    *slog.Logger
+
+	// ops is the unauthenticated probe listener on opsAddr; nil when none is
+	// configured. checks is its readiness state (D-05, D-07).
+	ops     *http.Server
+	opsAddr string
+	checks  *ops.Checks
 }
 
 // New builds the mux and the mTLS server. It loads and checks every file the
@@ -56,11 +72,20 @@ func New(o Options) (*Server, error) {
 	if log == nil {
 		log = slog.Default()
 	}
-	srv, err := NewMTLSServer(o.Addr, o.TLS, NewMux(NewDeployHandlers(o.Runner, log), NewEnvironmentHandlers(o.Runner, o.ProtectedEnvironments, log)), log)
+	srv, crl, err := newMTLSServer(o.Addr, o.TLS, NewMux(NewDeployHandlers(o.Runner, log), NewEnvironmentHandlers(o.Runner, o.ProtectedEnvironments, log)), log)
 	if err != nil {
 		return nil, err
 	}
-	return &Server{srv: srv, runner: o.Runner, store: o.Store, log: log.With("component", "server")}, nil
+	s := &Server{srv: srv, runner: o.Runner, store: o.Store, log: log.With("component", "server")}
+	s.checks = &ops.Checks{EnginePath: o.EnginePath, EnvironmentsDir: o.EnvironmentsDir, CertificatePath: o.TLS.Certificate}
+	if crl != nil { // a nil *crlSet in the interface would not be a nil source
+		s.checks.CRL = crl
+	}
+	if o.OpsListen != "" {
+		s.opsAddr = o.OpsListen
+		s.ops = &http.Server{Handler: ops.NewMux(s.checks, nil), ReadHeaderTimeout: 5 * time.Second}
+	}
+	return s, nil
 }
 
 // OptionsFromConfig builds the store and the runner for cfg, in the order the
@@ -114,6 +139,9 @@ func OptionsFromConfig(ctx context.Context, cfg *config.Config, log *slog.Logger
 		Logger: log,
 
 		ProtectedEnvironments: cfg.Deploys.ProtectedEnvironments,
+		OpsListen:             cfg.Ops.Listen,
+		EnginePath:            cfg.Engine.CommandPath,
+		EnvironmentsDir:       cfg.Deploys.Basedir,
 	}, nil
 }
 
@@ -125,37 +153,51 @@ func (s *Server) Handler() http.Handler { return s.srv.Handler }
 func (s *Server) HTTPServer() *http.Server { return s.srv }
 
 // Serve listens and serves until ctx is cancelled, then shuts down in an order
-// that leaves every admitted deploy on record (PD-18, FORK-WR-01):
+// that leaves every admitted deploy on record (PD-18, FORK-WR-01) and keeps
+// the ops listener answering until the last of it is done (PD-36):
 //
-//  1. the HTTP server starts to shut down in the background: listeners close at
-//     once, requests in flight (a wait:true deploy among them) carry on;
+//  1. /readyz starts to answer 503 (draining), and the HTTP server starts to
+//     shut down in the background: listeners close at once, requests in
+//     flight (a wait:true deploy among them) carry on;
 //  2. the runner shuts down: it refuses new jobs, cancels its context, which
 //     stops a running engine (its whole process group) and fails queued jobs,
 //     and waits until every admitted job, wait:true included, has written its
 //     final record;
 //  3. Serve waits for the HTTP shutdown, so each answer has been written;
-//  4. the store is closed, which removes the instance lock file (FORK-WR-03).
+//  4. the ops listener stops, so a probe sees 503 for the whole drain;
+//  5. the store is closed, which removes the instance lock file (FORK-WR-03).
 //
 // Under systemd TimeoutStopSec=60 this fits: steps 1 to 3 are bounded by
-// shutdownGrace together.
+// shutdownGrace together, step 4 by opsShutdownGrace.
+//
+// The ops address is bound first: if it cannot be, Serve returns that error
+// and the mTLS listener is never opened.
 func (s *Server) Serve(ctx context.Context) error {
-	errc := make(chan error, 1)
-	go func() { errc <- s.srv.ListenAndServeTLS("", "") }()
 	var first error
 	keep := func(err error) {
 		if first == nil && err != nil {
 			first = err
 		}
 	}
+	if err := s.startOps(); err != nil {
+		keep(err)
+		keep(s.runner.Shutdown(shutdownGrace))
+		keep(s.closeStore())
+		return first
+	}
+	errc := make(chan error, 1)
+	go func() { errc <- s.srv.ListenAndServeTLS("", "") }()
 	select {
 	case err := <-errc: // the listener failed (address in use, ...)
 		keep(err)
 		keep(s.runner.Shutdown(shutdownGrace))
+		keep(s.stopOps())
 		keep(s.closeStore())
 		return first
 	case <-ctx.Done():
 	}
 	s.log.Info("shutting down")
+	s.checks.SetDraining()
 	httpDone := make(chan error, 1)
 	go func() {
 		sctx, cancel := context.WithTimeout(context.Background(), shutdownGrace)
@@ -174,8 +216,47 @@ func (s *Server) Serve(ctx context.Context) error {
 	if err := <-errc; err != nil && !errors.Is(err, http.ErrServerClosed) {
 		keep(err)
 	}
+	keep(s.stopOps())
 	keep(s.closeStore())
 	return first
+}
+
+// startOps binds the ops listener and serves it in the background. A bind
+// beyond loopback is allowed but warned about once: the listener has no
+// authentication (D-05, T-57.6.2-33).
+func (s *Server) startOps() error {
+	if s.ops == nil {
+		return nil
+	}
+	ln, err := net.Listen("tcp", s.opsAddr)
+	if err != nil {
+		return fmt.Errorf("ops listener on %s: %w", s.opsAddr, err)
+	}
+	if !ops.Loopback(s.opsAddr) {
+		s.log.Warn("the ops listener is not on a loopback address: /healthz, /readyz and /metrics are unauthenticated; firewall it or set ops.listen to 127.0.0.1",
+			"addr", s.opsAddr)
+	}
+	s.log.Info("ops listening", "addr", ln.Addr().String())
+	go func() {
+		if err := s.ops.Serve(ln); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			s.log.Error("ops listener stopped", "error", err.Error())
+		}
+	}()
+	return nil
+}
+
+func (s *Server) stopOps() error {
+	if s.ops == nil {
+		return nil
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), opsShutdownGrace)
+	defer cancel()
+	if err := s.ops.Shutdown(ctx); err != nil {
+		_ = s.ops.Close()
+		s.log.Error("ops listener shutdown", "error", err.Error())
+		return err
+	}
+	return nil
 }
 
 func (s *Server) closeStore() error {

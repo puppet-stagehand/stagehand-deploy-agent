@@ -90,7 +90,7 @@ func startServeRig(t *testing.T, engineDelay string, mods ...rigMod) *serveRig {
 		t.Fatal(err)
 	}
 	addr := "127.0.0.1:" + strconv.Itoa(freePort(t))
-	opts := Options{Addr: addr, TLS: f.tls, Runner: runner, Store: store, Logger: log}
+	opts := Options{Addr: addr, TLS: f.tls, Runner: runner, Store: store, Logger: log, EnginePath: exe, EnvironmentsDir: basedir}
 	if rc.options != nil {
 		rc.options(&opts)
 	}

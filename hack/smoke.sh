@@ -4,7 +4,9 @@
 # an allow-listed client certificate, poll until the record reads "deployed",
 # and check that a certificate whose certname is not allow-listed is refused in
 # the TLS handshake. It also removes an environment (DELETE) and checks that the
-# protected default, production, is refused. Prints "SMOKE OK" as its last line, or
+# protected default, production, is refused. It probes the loopback ops listener
+# (/healthz, /readyz) and checks that the mTLS port serves none of the ops routes.
+# Prints "SMOKE OK" as its last line, or
 # "SMOKE FAIL: <step>" and exits 1.
 set -eu
 
@@ -79,6 +81,7 @@ issue intruder intruder
 
 STEP="config"
 PORT=$(free_port 0)
+OPS_PORT=$(free_port 1)
 mkdir -p "$TMP/environments" "$TMP/state"
 cat >config.yml <<CFG
 server:
@@ -89,6 +92,8 @@ server:
     key: $TMP/server.key
     client_ca: $TMP/ca.pem
     allowed_certnames: [stagehand-code-manager]
+ops:
+  listen: 127.0.0.1:$OPS_PORT
 engine:
   name: r10k
   command_path: $TMP/fakeengine
@@ -115,6 +120,23 @@ until mtls -o /dev/null "$URL/api/v1/deploys?limit=1" 2>/dev/null; do
 	[ "$i" -lt 100 ] || exit 1
 	kill -0 "$AGENT_PID" 2>/dev/null || exit 1
 	sleep 0.1
+done
+
+STEP="ops listener: /healthz is ok"
+OPS="http://127.0.0.1:$OPS_PORT"
+[ "$(curl -sS --max-time 10 "$OPS/healthz")" = ok ]
+
+STEP="ops listener: /readyz is ready"
+curl -sS --max-time 10 -o ready.json -w '%{http_code}' "$OPS/readyz" >ready.code
+[ "$(cat ready.code)" = 200 ]
+grep -qx '{"ready":true,"failing":\[\]}' ready.json
+
+STEP="ops listener: the deploy API is not served"
+[ "$(curl -sS --max-time 10 -o /dev/null -w '%{http_code}' "$OPS/api/v1/deploys")" = 404 ]
+
+STEP="mTLS port: /readyz, /healthz and /metrics are 404 for the allowed certificate"
+for p in readyz healthz metrics; do
+	[ "$(mtls -o /dev/null -w '%{http_code}' "$URL/$p")" = 404 ]
 done
 
 STEP="POST /api/v1/deploys"

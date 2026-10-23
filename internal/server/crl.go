@@ -33,6 +33,8 @@ type crlSet struct {
 
 	mu      sync.Mutex
 	revoked map[string]struct{}
+	next    time.Time // the earliest NextUpdate among the lists in force
+	loadErr error     // why the last reload failed; nil after a good load
 	modTime time.Time
 	size    int64
 	checked time.Time
@@ -70,16 +72,17 @@ func loadCRL(path string, caPEM []byte, now func() time.Time) (*crlSet, error) {
 	if err != nil {
 		return nil, err
 	}
-	revoked, err := c.parse(b)
+	revoked, next, err := c.parse(b)
 	if err != nil {
 		return nil, err
 	}
-	c.revoked, c.modTime, c.size, c.checked = revoked, st.ModTime(), st.Size(), now()
+	c.revoked, c.next, c.modTime, c.size, c.checked = revoked, next, st.ModTime(), st.Size(), now()
 	return c, nil
 }
 
-// parse reads every CRL in b (PEM "X509 CRL" blocks, or one DER CRL).
-func (c *crlSet) parse(b []byte) (map[string]struct{}, error) {
+// parse reads every CRL in b (PEM "X509 CRL" blocks, or one DER CRL). It
+// returns the revoked set and the earliest NextUpdate of the lists.
+func (c *crlSet) parse(b []byte) (map[string]struct{}, time.Time, error) {
 	var ders [][]byte
 	for rest := b; ; {
 		var block *pem.Block
@@ -93,24 +96,28 @@ func (c *crlSet) parse(b []byte) (map[string]struct{}, error) {
 	}
 	if len(ders) == 0 {
 		if len(bytes.TrimSpace(b)) == 0 {
-			return nil, errors.New("the file is empty")
+			return nil, time.Time{}, errors.New("the file is empty")
 		}
 		ders = [][]byte{b} // perhaps DER
 	}
 	revoked := map[string]struct{}{}
+	var next time.Time
 	for i, der := range ders {
 		rl, err := x509.ParseRevocationList(der)
 		if err != nil {
-			return nil, fmt.Errorf("CRL %d: %w", i+1, err)
+			return nil, time.Time{}, fmt.Errorf("CRL %d: %w", i+1, err)
 		}
 		if err := c.checkIssuer(rl); err != nil {
-			return nil, fmt.Errorf("CRL %d: %w", i+1, err)
+			return nil, time.Time{}, fmt.Errorf("CRL %d: %w", i+1, err)
 		}
 		for _, e := range rl.RevokedCertificateEntries {
 			revoked[revocationKey(rl.RawIssuer, e.SerialNumber)] = struct{}{}
 		}
+		if next.IsZero() || (!rl.NextUpdate.IsZero() && rl.NextUpdate.Before(next)) {
+			next = rl.NextUpdate
+		}
 	}
-	return revoked, nil
+	return revoked, next, nil
 }
 
 func (c *crlSet) checkIssuer(rl *x509.RevocationList) error {
@@ -132,6 +139,7 @@ func (c *crlSet) maybeReload() {
 	c.checked = now
 	st, err := os.Stat(c.path)
 	if err != nil {
+		c.loadErr = err
 		c.log.Error("CRL unreadable; keeping the last good CRL", "error", err.Error())
 		return
 	}
@@ -141,15 +149,16 @@ func (c *crlSet) maybeReload() {
 	b, err := os.ReadFile(c.path)
 	if err == nil {
 		var revoked map[string]struct{}
-		if revoked, err = c.parse(b); err == nil {
-			c.revoked, c.modTime, c.size = revoked, st.ModTime(), st.Size()
+		var next time.Time
+		if revoked, next, err = c.parse(b); err == nil {
+			c.revoked, c.next, c.loadErr, c.modTime, c.size = revoked, next, nil, st.ModTime(), st.Size()
 			c.log.Info("CRL reloaded", "revoked_certificates", len(revoked))
 			return
 		}
 	}
 	// Remember this version so a broken file is reported once, not every
 	// minute; a further change is tried again.
-	c.modTime, c.size = st.ModTime(), st.Size()
+	c.modTime, c.size, c.loadErr = st.ModTime(), st.Size(), err
 	c.log.Error("CRL reload failed; keeping the last good CRL", "error", err.Error())
 }
 
@@ -162,8 +171,27 @@ func (c *crlSet) Revoked(cert *x509.Certificate) bool {
 	return ok
 }
 
-// NextUpdate is the earliest NextUpdate of the CRLs last loaded.
-func (c *crlSet) NextUpdate() time.Time { return time.Time{} }
+// NextUpdate is the earliest NextUpdate among the CRLs in force: when the
+// list the server is enforcing stops being current. It follows a changed file
+// on the same once-a-minute schedule as Revoked.
+func (c *crlSet) NextUpdate() time.Time {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.maybeReload()
+	return c.next
+}
 
-// Readable reports whether the CRL file can still be read.
-func (c *crlSet) Readable() error { return nil }
+// Readable reports whether the CRL file can still be read as a CRL: nil after
+// a good load, otherwise the reason the last reload failed. The last good list
+// stays in force either way (a broken file never un-revokes anyone), so this
+// is for readiness, not for authentication. The file is looked at on every
+// call, not only on the reload schedule, so a deleted file shows at once.
+func (c *crlSet) Readable() error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.maybeReload()
+	if _, err := os.Stat(c.path); err != nil {
+		return err
+	}
+	return c.loadErr
+}

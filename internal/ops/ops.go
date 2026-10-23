@@ -1,36 +1,46 @@
-// Package ops is the plain-HTTP operations listener: /healthz, /readyz and
-// /metrics, and nothing else (D-05).
+// Package ops is the plain-HTTP operations listener (D-05): /healthz, /readyz
+// and /metrics, and nothing else. It has no authentication, so it binds
+// loopback by default and carries no deploy route; the deploy API lives on the
+// mTLS port and the mTLS port carries none of these.
 package ops
 
 import (
+	"net"
 	"net/http"
-	"time"
 )
 
-// CRLSource is what readiness needs to know about the revocation list.
-type CRLSource interface {
-	NextUpdate() time.Time
-	Readable() error
+// NewMux serves exactly three routes: GET /healthz, GET /readyz and GET
+// /metrics. metrics is the registry's handler; nil leaves /metrics answering
+// 404. Anything else, including every /api path, falls to the mux's own 404.
+func NewMux(checks *Checks, metrics http.Handler) *http.ServeMux {
+	if metrics == nil {
+		metrics = http.NotFoundHandler()
+	}
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /healthz", healthz)
+	mux.HandleFunc("GET /readyz", checks.readyz)
+	mux.Handle("GET /metrics", metrics)
+	return mux
 }
 
-// Checks decides readiness (D-07).
-type Checks struct {
-	EnginePath      string
-	EnvironmentsDir string
-	CertificatePath string
-	CRL             CRLSource
-	Now             func() time.Time
+// healthz answers whenever the process serves; it checks nothing else, so a
+// supervisor can tell "hung" from "serving but not ready".
+func healthz(w http.ResponseWriter, _ *http.Request) {
+	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	_, _ = w.Write([]byte("ok"))
 }
 
-func (c *Checks) Failing() []string { return nil }
-func (c *Checks) Ready() bool       { return true }
-func (c *Checks) SetDraining()      {}
-
-// CertNotAfter returns the NotAfter of the first certificate in the PEM file.
-func CertNotAfter(path string) (time.Time, error) { return time.Time{}, nil }
-
-// NewMux serves the three ops routes.
-func NewMux(checks *Checks, metrics http.Handler) *http.ServeMux { return http.NewServeMux() }
-
-// Loopback reports whether addr binds only the loopback interface.
-func Loopback(addr string) bool { return true }
+// Loopback reports whether addr (host:port) binds only a loopback interface:
+// 127.0.0.0/8, ::1 or localhost. An empty host binds every interface and is
+// not loopback.
+func Loopback(addr string) bool {
+	host, _, err := net.SplitHostPort(addr)
+	if err != nil {
+		host = addr
+	}
+	if host == "localhost" {
+		return true
+	}
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback()
+}

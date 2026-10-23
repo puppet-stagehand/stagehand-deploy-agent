@@ -54,6 +54,13 @@ func NewMTLSServer(addr string, cfg TLSConfig, handler http.Handler, log *slog.L
 	return newMTLSServerWithClock(addr, cfg, handler, log, time.Now)
 }
 
+// newMTLSServer is NewMTLSServer that also returns the CRL set the handshake
+// consults, nil when no CRL is configured, so readiness and the info document
+// can ask it when it expires.
+func newMTLSServer(addr string, cfg TLSConfig, handler http.Handler, log *slog.Logger) (*http.Server, *crlSet, error) {
+	return buildMTLSServer(addr, cfg, handler, log, time.Now)
+}
+
 // fingerprint is the SHA-256 of a certificate's DER, as Puppet prints it.
 func fingerprint(cert *x509.Certificate) string {
 	sum := sha256.Sum256(cert.Raw)
@@ -95,25 +102,30 @@ func (t TLSConfig) validate() error {
 // newMTLSServerWithClock is NewMTLSServer with the clock the CRL reload
 // interval is measured on (tests inject one).
 func newMTLSServerWithClock(addr string, t TLSConfig, handler http.Handler, log *slog.Logger, now func() time.Time) (*http.Server, error) {
+	srv, _, err := buildMTLSServer(addr, t, handler, log, now)
+	return srv, err
+}
+
+func buildMTLSServer(addr string, t TLSConfig, handler http.Handler, log *slog.Logger, now func() time.Time) (*http.Server, *crlSet, error) {
 	if log == nil {
 		log = slog.Default()
 	}
 	if err := t.validate(); err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
 	caPEM, err := os.ReadFile(t.ClientCA)
 	if err != nil {
-		return nil, fmt.Errorf("server.tls.client_ca: %w", err)
+		return nil, nil, fmt.Errorf("server.tls.client_ca: %w", err)
 	}
 	pool := x509.NewCertPool()
 	if !pool.AppendCertsFromPEM(caPEM) {
-		return nil, fmt.Errorf("server.tls.client_ca: no PEM certificates found in %s", t.ClientCA)
+		return nil, nil, fmt.Errorf("server.tls.client_ca: no PEM certificates found in %s", t.ClientCA)
 	}
 
 	pair, err := tls.LoadX509KeyPair(t.Certificate, t.Key)
 	if err != nil {
-		return nil, fmt.Errorf("server.tls.certificate and server.tls.key: %w", err)
+		return nil, nil, fmt.Errorf("server.tls.certificate and server.tls.key: %w", err)
 	}
 
 	allowed := make(map[string]bool, len(t.AllowedCertnames))
@@ -124,7 +136,7 @@ func newMTLSServerWithClock(addr string, t TLSConfig, handler http.Handler, log 
 	var crl *crlSet
 	if t.CRL != "" {
 		if crl, err = loadCRL(t.CRL, caPEM, now); err != nil {
-			return nil, fmt.Errorf("server.tls.crl: %w", err)
+			return nil, nil, fmt.Errorf("server.tls.crl: %w", err)
 		}
 		crl.log = log.With("component", "crl")
 	}
@@ -132,13 +144,13 @@ func newMTLSServerWithClock(addr string, t TLSConfig, handler http.Handler, log 
 	for i, fp := range t.AllowedFingerprints {
 		norm, ok := NormalizeFingerprint(fp)
 		if !ok { // validate already refused it; kept for direct callers.
-			return nil, fmt.Errorf("server.tls.allowed_fingerprints[%d] is not a SHA-256 fingerprint", i)
+			return nil, nil, fmt.Errorf("server.tls.allowed_fingerprints[%d] is not a SHA-256 fingerprint", i)
 		}
 		pins[norm] = true
 	}
 	tlog := log.With("component", "tls")
 
-	return &http.Server{
+	srv := &http.Server{
 		Addr:              addr,
 		Handler:           handler,
 		ReadHeaderTimeout: 10 * time.Second,
@@ -183,5 +195,6 @@ func newMTLSServerWithClock(addr string, t TLSConfig, handler http.Handler, log 
 				return nil
 			},
 		},
-	}, nil
+	}
+	return srv, crl, nil
 }
