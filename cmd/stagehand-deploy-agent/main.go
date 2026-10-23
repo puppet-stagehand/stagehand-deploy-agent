@@ -4,6 +4,7 @@
 //
 //	stagehand-deploy-agent serve [--config PATH]
 //	stagehand-deploy-agent --check-config [--config PATH [--legacy]]
+//	stagehand-deploy-agent import-history --from DIR [--config PATH]
 //	stagehand-deploy-agent version
 //
 // Exit codes: 0 ok; 1 runtime error; 2 usage error; 77 serve run as root;
@@ -22,6 +23,7 @@ import (
 	"syscall"
 
 	"github.com/puppet-stagehand/stagehand-deploy-agent/internal/config"
+	"github.com/puppet-stagehand/stagehand-deploy-agent/internal/jobs"
 	"github.com/puppet-stagehand/stagehand-deploy-agent/internal/server"
 )
 
@@ -52,6 +54,8 @@ func run(args []string, stdout, stderr io.Writer) int {
 	switch {
 	case args[0] == "serve":
 		return serve(args[1:], stderr)
+	case args[0] == "import-history":
+		return importHistory(args[1:], stdout, stderr)
 	case args[0] == "version":
 		fmt.Fprintf(stdout, "stagehand-deploy-agent %s\n", version)
 		return exitOK
@@ -67,6 +71,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 func usage(w io.Writer) {
 	fmt.Fprintln(w, `usage: stagehand-deploy-agent serve [--config PATH]
        stagehand-deploy-agent --check-config [--config PATH [--legacy]]
+       stagehand-deploy-agent import-history --from DIR [--config PATH]
        stagehand-deploy-agent version`)
 }
 
@@ -134,6 +139,68 @@ func serve(args []string, stderr io.Writer) int {
 	if err := runServe(cfg, log); err != nil {
 		fmt.Fprintf(stderr, "stagehand-deploy-agent: refusing to start: %v\n", err)
 		return exitRuntime
+	}
+	return exitOK
+}
+
+// importHistory copies the fork's finished deploy records from DIR (its
+// <state_dir>/jobs) into the agent's store (D-02, PD-23). Unlike serve it may
+// run as root: the cutover script does, because the legacy directory is root's.
+// The source is only read. Exit 0 on success (records skipped are not errors),
+// 1 if DIR cannot be read or the import fails, 78 on a configuration ERROR.
+func importHistory(args []string, stdout, stderr io.Writer) int {
+	fs := flag.NewFlagSet("import-history", flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	from := fs.String("from", "", "the legacy jobs directory to read (<old state_dir>/jobs)")
+	explicit := fs.String("config", "", "path to the YAML configuration file")
+	if err := fs.Parse(args); err != nil || fs.NArg() != 0 || *from == "" {
+		usage(stderr)
+		return exitUsage
+	}
+	path, legacy, err := config.Locate(*explicit, config.DefaultPath, config.LegacyPath)
+	if err != nil {
+		fmt.Fprintf(stderr, "stagehand-deploy-agent: import-history: %v\n", err)
+		return exitBadConfig
+	}
+	cfg, findings := config.Load(path, legacy)
+	if cfg == nil {
+		for _, f := range findings {
+			fmt.Fprintln(stderr, f)
+		}
+		fmt.Fprintf(stderr, "stagehand-deploy-agent: import-history: config %s has errors\n", path)
+		return exitBadConfig
+	}
+	// Before anything is created: the source must be a readable directory.
+	if info, err := os.Stat(*from); err != nil || !info.IsDir() {
+		if err == nil {
+			err = fmt.Errorf("not a directory")
+		}
+		fmt.Fprintf(stderr, "stagehand-deploy-agent: import-history: cannot read --from %s: %v\n", *from, err)
+		return exitRuntime
+	}
+	if _, err := os.ReadDir(*from); err != nil {
+		fmt.Fprintf(stderr, "stagehand-deploy-agent: import-history: cannot read --from %s: %v\n", *from, err)
+		return exitRuntime
+	}
+	log := slog.New(slog.NewTextHandler(stderr, &slog.HandlerOptions{Level: slog.LevelWarn}))
+	store, err := jobs.NewFileStore(cfg.Deploys.StateDir, cfg.Deploys.MaxJobs, jobs.WithLogger(log))
+	if err != nil {
+		fmt.Fprintf(stderr, "stagehand-deploy-agent: import-history: %v\n", err)
+		return exitRuntime
+	}
+	rep, err := jobs.ImportHistory(*from, store)
+	if cerr := store.Close(); err == nil {
+		err = cerr
+	}
+	if err != nil {
+		fmt.Fprintf(stderr, "stagehand-deploy-agent: import-history: %v\n", err)
+		return exitRuntime
+	}
+	fmt.Fprintf(stdout, "imported %d; skipped %d already present, %d unfinished, %d unreadable\n",
+		rep.Imported, rep.SkippedExisting, rep.SkippedUnfinished, rep.SkippedUnreadable)
+	if rep.SkippedBeyondMax > 0 {
+		fmt.Fprintf(stderr, "stagehand-deploy-agent: import-history: %d older record(s) were not copied: deploys.max_jobs (%d) keeps only the newest\n",
+			rep.SkippedBeyondMax, cfg.Deploys.MaxJobs)
 	}
 	return exitOK
 }
