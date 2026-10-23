@@ -134,7 +134,7 @@ func newRig(t *testing.T, sha string) *rig {
 	if err != nil {
 		t.Fatal(err)
 	}
-	srv := httptest.NewServer(server.NewMux(server.NewDeployHandlers(runner, nil)))
+	srv := httptest.NewServer(server.NewMux(server.NewDeployHandlers(runner, nil), nil))
 	t.Cleanup(func() {
 		srv.Close()
 		_ = runner.Shutdown(10 * time.Second)

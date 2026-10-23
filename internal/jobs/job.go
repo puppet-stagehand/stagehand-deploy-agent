@@ -76,8 +76,12 @@ type EnvResult struct {
 // Job is one deploy request and its per-environment results. Its JSON form is
 // the /api/v1/deploys contract.
 type Job struct {
-	ID         string      `json:"id"`
-	Engine     string      `json:"engine"`
+	ID     string `json:"id"`
+	Engine string `json:"engine"`
+	// Kind is KindRemove for an environment removal and empty for a deploy.
+	// It is omitted when empty, so every deploy record keeps the bytes the
+	// Code Manager pack and the golden corpus expect (PD-20).
+	Kind       string      `json:"kind,omitempty"`
 	State      State       `json:"state"`
 	CreatedAt  time.Time   `json:"created_at"`
 	StartedAt  *time.Time  `json:"started_at"`
@@ -99,8 +103,15 @@ func (j Job) clone() Job {
 	return c
 }
 
+// KindRemove is the Kind of a job that removes an environment (D-09).
+const KindRemove = "remove"
+
 // ErrNotFound is returned by a Store for an unknown job id.
 var ErrNotFound = errors.New("deploy not found")
+
+// ErrEnvironmentNotFound is returned by NewRemoval when <basedir>/<env> does
+// not exist.
+var ErrEnvironmentNotFound = errors.New("environment not found")
 
 // Store keeps job records. FileStore (store.go) is what the server uses;
 // MemoryStore below serves tests.

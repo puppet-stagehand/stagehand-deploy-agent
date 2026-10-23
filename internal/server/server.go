@@ -51,7 +51,7 @@ func New(o Options) (*Server, error) {
 	if log == nil {
 		log = slog.Default()
 	}
-	srv, err := NewMTLSServer(o.Addr, o.TLS, NewMux(NewDeployHandlers(o.Runner, log)), log)
+	srv, err := NewMTLSServer(o.Addr, o.TLS, NewMux(NewDeployHandlers(o.Runner, log), nil), log)
 	if err != nil {
 		return nil, err
 	}

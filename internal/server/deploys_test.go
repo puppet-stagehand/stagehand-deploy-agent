@@ -61,7 +61,7 @@ func newTestDeploys(t *testing.T) (http.Handler, string) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = runner.Shutdown(10 * time.Second) })
-	return NewMux(NewDeployHandlers(runner, slog.New(slog.NewTextHandler(io.Discard, nil)))), argvLog
+	return NewMux(NewDeployHandlers(runner, slog.New(slog.NewTextHandler(io.Discard, nil))), nil), argvLog
 }
 
 func post(h http.Handler, body string) *httptest.ResponseRecorder {
@@ -321,7 +321,7 @@ func TestDeployRefusedWhileShuttingDown(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	r := NewMux(NewDeployHandlers(runner, slog.New(slog.NewTextHandler(io.Discard, nil))))
+	r := NewMux(NewDeployHandlers(runner, slog.New(slog.NewTextHandler(io.Discard, nil))), nil)
 	if err := runner.Shutdown(time.Second); err != nil {
 		t.Fatal(err)
 	}

@@ -120,7 +120,7 @@ func TestLegacyRoutesAbsentInMTLSMode(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	url := f.serve(t, NewMux(NewDeployHandlers(runner, nil)))
+	url := f.serve(t, NewMux(NewDeployHandlers(runner, nil), nil))
 	c := f.client(t, clientCert(t, f.ca, "stagehand-code-manager"))
 
 	body := `{"ref":"refs/heads/simple-tag","repository":{"name":"puppet-control"}}`
