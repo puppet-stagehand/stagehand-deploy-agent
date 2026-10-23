@@ -3,7 +3,7 @@
 All notable changes to the Stagehand deploy agent. The project follows semantic versioning: a breaking API change
 needs 2.0.0. The metric names and the seven `/api/v1/info` field names are part of the API from 1.0.0.
 
-## [1.0.0] - <tag date, set when v1.0.0 is tagged>
+## [1.0.0] - 2026-10-22
 
 The first release. It replaces the Stagehand fork of webhook-go (`puppet-stagehand/webhook-go`, last release
 v2.15.1-stagehand.1) on Stagehand Core estates' Puppet Core primaries.
