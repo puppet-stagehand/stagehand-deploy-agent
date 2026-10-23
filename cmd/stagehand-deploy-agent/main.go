@@ -18,6 +18,7 @@ import (
 	"io"
 	"log/slog"
 	"os"
+	"os/exec"
 	"os/signal"
 	"strings"
 	"syscall"
@@ -137,7 +138,7 @@ func serve(args []string, stderr io.Writer) int {
 	for _, f := range findings {
 		log.Warn("config", "component", "config", "key", f.Key, "message", f.Message, "file", path)
 	}
-	if err := runServe(cfg, log); err != nil {
+	if err := runServe(cfg, log, path); err != nil {
 		fmt.Fprintf(stderr, "stagehand-deploy-agent: refusing to start: %v\n", err)
 		return exitRuntime
 	}
@@ -220,11 +221,16 @@ func logLevel(s string) slog.Level {
 }
 
 // runServe builds the store, runner, mux and mTLS server from the checked
-// config and runs them until SIGTERM or SIGINT.
-func runServe(cfg *config.Config, log *slog.Logger) error {
+// config and runs them, with the ops listener beside them, until SIGTERM or
+// SIGINT. configPath is the file that was loaded, reported as config_source.
+func runServe(cfg *config.Config, log *slog.Logger, configPath string) error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
-	opts, err := server.OptionsFromConfig(ctx, cfg, log)
+	ev := engineVersion(cfg.Engine, engineVersionTimeout)
+	if ev == "" {
+		log.Warn("the engine did not report its version; /api/v1/info will say null", "component", "server", "engine", cfg.Engine.Name)
+	}
+	opts, err := server.OptionsFromConfigBuild(ctx, cfg, log, server.BuildInfo{Version: version, EngineVersion: ev, ConfigSource: configPath})
 	if err != nil {
 		return err
 	}
@@ -245,5 +251,54 @@ func runServe(cfg *config.Config, log *slog.Logger) error {
 	return srv.Serve(ctx)
 }
 
-// engineVersion returns the first line of the engine's own version output.
-func engineVersion(e config.Engine, timeout time.Duration) string { return "" }
+// engineVersionTimeout bounds the one-off "what version are you" call (PD-35).
+const engineVersionTimeout = 5 * time.Second
+
+// engineVersionMax caps the stored line: it is published in /api/v1/info.
+const engineVersionMax = 200
+
+// engineVersion asks the engine for its own version once, at start (PD-35):
+// `<command_path> version` for r10k, `<command_path> -version` for g10k, argv
+// only, never a shell. It returns the first non-empty line of stdout as the
+// tool printed it, trimmed and capped; empty (reported as null) when the engine
+// is missing, fails, prints nothing or does not answer within timeout. It
+// never fails the start and is never run again per request.
+func engineVersion(e config.Engine, timeout time.Duration) string {
+	flagName := "version"
+	if e.Name == "g10k" {
+		flagName = "-version"
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, e.CommandPath, flagName)
+	cmd.WaitDelay = time.Second // do not wait on a grandchild holding the pipe
+	var out limitedBuffer
+	cmd.Stdout = &out
+	if err := cmd.Run(); err != nil {
+		return ""
+	}
+	for _, line := range strings.Split(out.String(), "\n") {
+		if line = strings.TrimSpace(line); line != "" {
+			if len(line) > engineVersionMax {
+				line = line[:engineVersionMax]
+			}
+			return line
+		}
+	}
+	return ""
+}
+
+// limitedBuffer keeps the first limitedBufferMax bytes written and discards
+// the rest, so a runaway engine cannot grow the agent.
+type limitedBuffer struct{ b []byte }
+
+const limitedBufferMax = 4096
+
+func (l *limitedBuffer) Write(p []byte) (int, error) {
+	if room := limitedBufferMax - len(l.b); room > 0 {
+		l.b = append(l.b, p[:min(room, len(p))]...)
+	}
+	return len(p), nil
+}
+
+func (l *limitedBuffer) String() string { return string(l.b) }

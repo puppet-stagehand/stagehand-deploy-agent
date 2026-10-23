@@ -95,7 +95,29 @@ func New(o Options) (*Server, error) {
 	if tlsCfg.RefusalCounter == nil {
 		tlsCfg.RefusalCounter = reg.TLSRefusal
 	}
-	mux := NewMux(NewDeployHandlers(o.Runner, log), NewEnvironmentHandlers(o.Runner, o.ProtectedEnvironments, log))
+	certNotAfter, err := ops.CertNotAfter(o.TLS.Certificate)
+	if err != nil {
+		return nil, fmt.Errorf("server.tls.certificate: %w", err)
+	}
+	// The CRL set does not exist until the TLS server is built, and the mux is
+	// needed to build it, so the info handler reads the CRL through a variable
+	// filled in just after.
+	var crl *crlSet
+	info := NewInfoHandler(InfoOptions{
+		Version:         versionOrDev(o.Build.Version),
+		EngineName:      o.Runner.Engine(),
+		EngineVersion:   o.Build.EngineVersion,
+		EnvironmentsDir: o.EnvironmentsDir,
+		CertNotAfter:    certNotAfter,
+		CRLNextUpdate: func() time.Time {
+			if crl == nil {
+				return time.Time{}
+			}
+			return crl.NextUpdate()
+		},
+		ConfigSource: o.Build.ConfigSource,
+	})
+	mux := NewMux(NewDeployHandlers(o.Runner, log), NewEnvironmentHandlers(o.Runner, o.ProtectedEnvironments, log), info)
 	srv, crl, err := newMTLSServer(o.Addr, tlsCfg, Wrap(mux, log, reg), log)
 	if err != nil {
 		return nil, err

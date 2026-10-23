@@ -5,7 +5,8 @@
 # and check that a certificate whose certname is not allow-listed is refused in
 # the TLS handshake. It also removes an environment (DELETE) and checks that the
 # protected default, production, is refused. It probes the loopback ops listener
-# (/healthz, /readyz) and checks that the mTLS port serves none of the ops routes.
+# (/healthz, /readyz, /metrics), checks that the mTLS port serves none of the ops
+# routes, and reads GET /api/v1/info.
 # Prints "SMOKE OK" as its last line, or
 # "SMOKE FAIL: <step>" and exits 1.
 set -eu
@@ -138,6 +139,17 @@ STEP="mTLS port: /readyz, /healthz and /metrics are 404 for the allowed certific
 for p in readyz healthz metrics; do
 	[ "$(mtls -o /dev/null -w '%{http_code}' "$URL/$p")" = 404 ]
 done
+
+STEP="ops listener: /metrics is served"
+curl -sS --max-time 10 -D metrics.headers -o metrics.txt "$OPS/metrics"
+grep -qi '^content-type: text/plain; version=0.0.4' metrics.headers
+grep -q '^stagehand_deploy_agent_ready 1$' metrics.txt
+grep -q '^stagehand_deploy_agent_build_info{version="dev",engine="r10k"} 1$' metrics.txt
+
+STEP="GET /api/v1/info answers the seven fields in order"
+CODE=$(mtls -o info.json -w '%{http_code}' "$URL/api/v1/info")
+[ "$CODE" = 200 ]
+grep -q '^{"version":"dev","engine":"r10k","engine_version":\(null\|"[^"]*"\),"environments_dir":"'"$TMP"'/environments","cert_not_after":"[0-9T:Z-]*","crl_next_update":null,"config_source":"'"$TMP"'/config.yml"}$' info.json
 
 STEP="POST /api/v1/deploys"
 CODE=$(mtls -o post.json -D post.headers -w '%{http_code}' -X POST \
