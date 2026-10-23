@@ -108,7 +108,7 @@ func newTracerBuild(t *testing.T, extraTop string, build BuildInfo) *tracer {
 	argvLog := filepath.Join(t.TempDir(), "argv.log")
 	fixture, _ := filepath.Abs("../jobs/testdata/r10k-5.0.3/deploy-success.json")
 
-	cfg := loadConfig(t, f, fmt.Sprintf(`  basedir: %q
+	cfg := loadConfig(t, f, fmt.Sprintf(`  environments_dir: %q
   timeout: 1m
 engine:
   command_path: %q

@@ -25,7 +25,7 @@ engine:
   use_legacy_puppetfile_flag: false
   ssh_config: "/etc/x y"
 deploys:
-  basedir: /etc/puppetlabs/code/environments
+  environments_dir: /etc/puppetlabs/code/environments
   state_dir: /var/lib/stagehand-deploy-agent
   timeout: 15m
   output_limit: 262144

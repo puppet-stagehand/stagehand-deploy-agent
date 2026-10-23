@@ -194,7 +194,7 @@ func TestAsyncDeployG10k(t *testing.T) {
 	argvLog := filepath.Join(t.TempDir(), "argv.log")
 	fixture, _ := filepath.Abs("../jobs/testdata/g10k-0.10.0/deploy-success.json")
 
-	cfg := loadConfig(t, f, fmt.Sprintf(`  basedir: %q
+	cfg := loadConfig(t, f, fmt.Sprintf(`  environments_dir: %q
   timeout: 1m
   output_limit: 4096
 engine:

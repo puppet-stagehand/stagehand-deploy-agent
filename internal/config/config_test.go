@@ -90,7 +90,7 @@ func TestLoadRefusesEachMistakeNamingItsKey(t *testing.T) {
 		{"port_too_big.yml", "server.port"},
 		{"empty_certnames.yml", "server.tls.allowed_certnames"},
 		{"bad_certname.yml", "server.tls.allowed_certnames[1]"},
-		{"relative_basedir.yml", "deploys.basedir"},
+		{"relative_environments_dir.yml", "deploys.environments_dir"},
 		{"relative_certificate.yml", "server.tls.certificate"},
 		{"bad_protected_env.yml", "deploys.protected_environments[0]"},
 		{"bad_ssh_config.yml", "engine.ssh_config"},
@@ -111,6 +111,29 @@ func TestLoadRefusesEachMistakeNamingItsKey(t *testing.T) {
 				t.Fatalf("findings = %+v, want exactly one ERROR for key %q", fs, tc.key)
 			}
 		})
+	}
+}
+
+// deploys.environments_dir was named deploys.basedir before 1.0.0 was frozen.
+// The agent was never released under the old name, so there is no alias: the
+// strict loader refuses it like any unknown key, and says what replaced it.
+func TestDeploysBasedirIsRefusedAndNamesItsReplacement(t *testing.T) {
+	body, err := os.ReadFile("testdata/valid.yml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	old := bytes.Replace(body, []byte("  environments_dir:"), []byte("  basedir:"), 1)
+	if bytes.Equal(old, body) {
+		t.Fatal("valid.yml has no deploys.environments_dir line to rename")
+	}
+	c, fs := Parse(old, "t", false)
+	if c != nil {
+		t.Fatalf("a file with deploys.basedir produced a Config: %+v", c)
+	}
+	errs := errorsOf(fs)
+	if len(errs) != 1 || errs[0].Key != "deploys.basedir" ||
+		!strings.Contains(errs[0].Message, "unknown key") || !strings.Contains(errs[0].Message, "deploys.environments_dir") {
+		t.Fatalf("findings = %+v, want one ERROR for deploys.basedir that names deploys.environments_dir", fs)
 	}
 }
 
