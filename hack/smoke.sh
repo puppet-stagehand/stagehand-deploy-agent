@@ -173,7 +173,9 @@ while :; do
 	sleep 0.1
 done
 [ ! -e "$TMP/environments/feature_x" ]
-if ls -A "$TMP/environments" | grep -q '^\.removing-'; then exit 1; fi
+for leftover in "$TMP"/environments/.removing-*; do
+	[ -e "$leftover" ] && exit 1
+done
 
 STEP="a removal is not listed as a deploy"
 CODE=$(mtls -o gone.json -w '%{http_code}' "$URL/api/v1/deploys/$RID")
