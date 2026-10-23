@@ -40,4 +40,44 @@ jobs:
         run: go run golang.org/x/vuln/cmd/govulncheck@v1.1.4 ./...
 
       - name: Lint the shell scripts
-        run: shellcheck hack/*.sh
+        run: shellcheck hack/*.sh packaging/scripts/*.sh
+
+  # The release path without publishing or signing anything: the goreleaser
+  # configuration, a snapshot build, the unit and package-script tests, then the
+  # two container checks (systemd's own verdict on the unit; the deb and rpm
+  # replacing the fork's webhook-go in debian:12 and rockylinux:9). The release
+  # workflow runs none of these checks again, so a broken package fails here first.
+  package:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: "1.25"
+          check-latest: true
+
+      # The same fixed goreleaser version the release workflow uses.
+      - name: Install goreleaser
+        uses: goreleaser/goreleaser-action@a4f02ab5355a589de60d917a659ce617ed19b3de # v7.3.0
+        with:
+          distribution: goreleaser
+          version: "v2.18.0"
+          install-only: true
+
+      - name: Check the goreleaser configuration
+        run: goreleaser check
+
+      - name: Snapshot build
+        run: goreleaser release --snapshot --clean --skip=sign,sbom,publish
+
+      - name: Unit and package-script tests
+        run: go test -count=1 ./packaging
+
+      - name: Verify the unit with systemd
+        run: sh hack/unit-verify.sh
+
+      - name: Install the packages over the fork's in containers
+        run: sh hack/package-smoke.sh
