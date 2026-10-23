@@ -42,7 +42,7 @@ work. Keep the sentence "not a deploy runtime" in the Dockerfile label, the rele
    at the commit the script names (it never modifies it).
    govulncheck reports the standard library of the Go toolchain on your machine. If your local Go is older than
    the newest patch, it can list standard-library findings; the gate records them and passes only when every
-   finding is in the standard library, and the release build in CI uses the newest patch of the 1.25 line. Set
+   finding is in the standard library, and the release build in CI uses the newest patch of the 1.26 line. Set
    `GATE_STRICT_VULN=1` to make any finding fail.
 3. Check CI is green for that commit: `gh run list --repo puppet-stagehand/stagehand-deploy-agent --branch main --limit 1`.
 4. Check the names that become a contract: the metric names (`internal/metrics/metrics.go`) and the seven
@@ -125,8 +125,11 @@ removed in **1.2.0** (`LegacyFallbackRemovedIn` in `internal/config/legacy.go`).
 
 ## Go version and vulnerabilities
 
-`go.mod` says `go 1.25.0`; CI and the release workflow install the newest 1.25 patch (`check-latest: true`) so the
-binary carries the standard-library security fixes. `govulncheck` (pinned in `ci.yml`, and in
+`go.mod` says `go 1.25.0` (the oldest language version the code needs); CI and the release workflow install the
+newest 1.26 patch (`check-latest: true`) so the binary carries the standard-library security fixes. They moved from
+the 1.25 line on 2026-10-22 because its newest patch (1.25.14) still had eight standard-library findings that are fixed
+only in Go 1.26.9 and 1.26.10. When Go 1.28 is released and 1.26 leaves support, move `go-version` in `ci.yml` and
+`release.yml` to the next supported line. `govulncheck` (pinned in `ci.yml`, and in
 `hack/release-gate.sh`, to the same version) runs on every push. A finding in the standard library means: rebuild
 with the newest Go patch and re-release if the issue is reachable.
 

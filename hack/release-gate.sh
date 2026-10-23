@@ -14,7 +14,7 @@
 # If that toolchain is older than the newest patch it lists standard-library
 # findings. Those are recorded and pass only when EVERY finding is in the
 # standard library (the release workflow builds with the newest patch of the
-# 1.25 line); any finding in a module fails. GATE_STRICT_VULN=1 makes any
+# 1.26 line); any finding in a module fails. GATE_STRICT_VULN=1 makes any
 # finding fail.
 #
 # Needs: go, git, docker, goreleaser, actionlint, shellcheck, network access.
@@ -73,7 +73,7 @@ vuln_check() {
 	if [ "${GATE_STRICT_VULN:-}" != "1" ] && [ "$total" -gt 0 ] && [ "$total" -eq "$stdlib" ]; then
 		ids=$(grep '^Vulnerability #' "$TMP/vuln.txt" | sed 's/^Vulnerability #[0-9]*: //' | tr '\n' ' ')
 		echo "govulncheck: $total finding(s), all in the Go standard library of $(go version | cut -d' ' -f3): $ids"
-		echo "govulncheck: recorded, not hidden; the release build uses the newest patch of Go 1.25"
+		echo "govulncheck: recorded, not hidden; the release build uses the newest patch of Go 1.26"
 		return 0
 	fi
 	return 1

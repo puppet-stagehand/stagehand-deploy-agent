@@ -22,10 +22,12 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          # The 1.25 line, newest patch. go-version-file would read go.mod's
+          # The 1.26 line, newest patch. go-version-file would read go.mod's
           # "go 1.25.0" and install exactly 1.25.0, whose standard library has
-          # the fixed vulnerabilities govulncheck below reports.
-          go-version: "1.25"
+          # the fixed vulnerabilities govulncheck below reports. Not the 1.25
+          # line: its newest patch (1.25.14) still carries eight standard-library
+          # findings that are fixed only from Go 1.26.9 and 1.26.10 on.
+          go-version: "1.26"
           check-latest: true
 
       - name: Vet
@@ -56,7 +58,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          go-version: "1.25"
+          go-version: "1.26"
           check-latest: true
 
       # The same fixed goreleaser version the release workflow uses.

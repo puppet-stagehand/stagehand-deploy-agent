@@ -55,9 +55,9 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          # The 1.25 line, newest patch: the release binary must carry the
+          # The 1.26 line, newest patch: the release binary must carry the
           # standard-library security fixes (govulncheck in ci.yml checks the same).
-          go-version: "1.25"
+          go-version: "1.26"
           check-latest: true
 
       - name: Test
