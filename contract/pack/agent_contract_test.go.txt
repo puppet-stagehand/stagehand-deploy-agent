@@ -111,7 +111,7 @@ engine:
   name: r10k
   command_path: %s
 deploys:
-  basedir: %s
+  environments_dir: %s
   state_dir: %s
   timeout: 1m
 `, port, certPath, keyPath, caPath, certname, engine, basedir, stateDir)))

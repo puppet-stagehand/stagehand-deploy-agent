@@ -37,6 +37,9 @@ v2.15.1-stagehand.1) on Stagehand Core estates' Puppet Core primaries.
   `/etc/voxpupuli/webhook.yml` is read only when the new file is absent, with a warning, and the fallback is
   **removed in 1.2.0**. Known keys are mapped; chat integration, basic authentication (`server.protected`) and the
   git-host routes are removed, and an enabled one stops the agent starting and names the key.
+- The fork's `deploys.basedir` is `deploys.environments_dir` in the agent's file, matching the `environments_dir` field
+  of `GET /api/v1/info`. The agent's own file refuses `deploys.basedir` as an unknown key and names the new key;
+  only the legacy fallback still reads the fork's spelling.
 - The server uses `net/http` (Go 1.22 method patterns) instead of gin, and the deploy state and ports live under the
   agent's names (`/var/lib/stagehand-deploy-agent`, port 8088 kept).
 - Two recorded divergences from the fork's `/api/v1/deploys` answers (the pack is unaffected; see

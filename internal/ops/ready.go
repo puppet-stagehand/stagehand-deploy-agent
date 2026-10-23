@@ -42,7 +42,7 @@ type CRLSource interface {
 type Checks struct {
 	// EnginePath is engine.command_path: a regular file this process may run.
 	EnginePath string
-	// EnvironmentsDir is deploys.basedir: a directory this process may write.
+	// EnvironmentsDir is deploys.environments_dir: a directory this process may write.
 	EnvironmentsDir string
 	// CertificatePath is server.tls.certificate, read again on every check.
 	CertificatePath string

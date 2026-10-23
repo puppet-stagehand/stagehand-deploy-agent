@@ -18,7 +18,7 @@ type InfoOptions struct {
 	// EngineVersion is the engine's own version line, captured once at start;
 	// empty when it did not answer, which the document reports as null.
 	EngineVersion string
-	// EnvironmentsDir is deploys.basedir.
+	// EnvironmentsDir is deploys.environments_dir.
 	EnvironmentsDir string
 	// CertNotAfter is the NotAfter of the server certificate being served.
 	CertNotAfter time.Time

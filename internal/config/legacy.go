@@ -186,7 +186,7 @@ func mapLegacy(l *legacyConfig, sc *scan) (*Config, []Finding) {
 
 	d := l.Deploys
 	c.Deploys = Deploys{
-		Basedir:               orString(d.Basedir, "/etc/puppetlabs/code/environments"),
+		EnvironmentsDir:       orString(d.Basedir, "/etc/puppetlabs/code/environments"),
 		StateDir:              orString(d.StateDir, legacyStateDir),
 		Timeout:               Duration(15 * time.Minute),
 		OutputLimit:           262144,

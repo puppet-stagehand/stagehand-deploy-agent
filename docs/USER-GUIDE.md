@@ -150,7 +150,7 @@ agent reads it once, at start).
 | `engine.env_incremental` | `false` | Deploy only the modules that changed. |
 | `engine.use_legacy_puppetfile_flag` | `false` | Use the old `--puppetfile` flag (very old r10k). |
 | `engine.ssh_config` | none | An `ssh_config` for git, passed as `ssh -F <path>`. It is how host keys are pinned. Letters, digits and `. _ / -` only. |
-| `deploys.basedir` | `/etc/puppetlabs/code/environments` | Where environments and their deploy markers live. Absolute. |
+| `deploys.environments_dir` | `/etc/puppetlabs/code/environments` | Where environments and their deploy markers live. Absolute. |
 | `deploys.state_dir` | `/var/lib/stagehand-deploy-agent` | Where job records (`jobs/<id>.json`, mode 0600), the deploy lock (`deploy.lock`) and the per-process lock files live. Mode 0700. |
 | `deploys.timeout` | `15m` | How long one environment may take. When it runs out, the engine and everything it started are stopped. At least `1s`. |
 | `deploys.output_limit` | `262144` | How many bytes of engine output to keep per environment (the end is kept). At least 1024. |
@@ -185,7 +185,9 @@ For one release the agent can still read the old configuration file so a move do
 - It reads `/etc/voxpupuli/webhook.yml` **only when** `/etc/stagehand-deploy-agent/config.yml` does not exist, and
   logs one WARNING naming the file. An explicit `--config PATH` never falls back.
 - **What is mapped:** the port, the TLS settings (certificate, key, client CA, allowed certnames, CRL, fingerprints),
-  the r10k and g10k settings (`use_g10k_commands: true` selects g10k) and the `deploys.*` settings. The old default
+  the r10k and g10k settings (`use_g10k_commands: true` selects g10k) and the `deploys.*` settings. The old file's
+  `deploys.basedir` becomes the agent's `deploys.environments_dir`; write the new name in the new file, because the
+  agent's own file refuses `deploys.basedir` as an unknown key. The old default
   port 4000 and state directory `/var/lib/webhook-go` are kept when the old file leaves them out, with a warning
   that the pack expects 8088.
 - **What is ignored, with one warning:** `server.queue.*`, `server.deploy_on_success_only`, `mappings`, the branch
@@ -341,7 +343,7 @@ Seven fields, in this order. They are a published contract from v1.0.0; renaming
 | `version` | The agent version, for example `1.0.0`. |
 | `engine` | `r10k` or `g10k`. |
 | `engine_version` | The engine's own first version line, read once at start. `null` when the engine did not answer. |
-| `environments_dir` | `deploys.basedir`. |
+| `environments_dir` | `deploys.environments_dir`. |
 | `cert_not_after` | When the server certificate being served expires (RFC 3339, UTC). |
 | `crl_next_update` | When the CRL's next update is due. `null` when no CRL is configured. |
 | `config_source` | The configuration file that was loaded: the agent's own path, or `/etc/voxpupuli/webhook.yml` when the fallback was used. |

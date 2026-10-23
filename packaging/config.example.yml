@@ -73,7 +73,7 @@ engine:
 
 deploys:
   # Where environments live; each environment's deploy marker is read from here.
-  basedir: /etc/puppetlabs/code/environments
+  environments_dir: /etc/puppetlabs/code/environments
   # Where job records and the deploy lock are kept.
   state_dir: /var/lib/stagehand-deploy-agent
   # How long one environment's deploy may run before it is stopped. A number

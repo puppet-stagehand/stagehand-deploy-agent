@@ -65,7 +65,7 @@ func TestLoadMinimalFileTakesTheDefaults(t *testing.T) {
 		t.Fatalf("engine = %+v", c.Engine)
 	}
 	d := c.Deploys
-	if d.Basedir != "/etc/puppetlabs/code/environments" || d.StateDir != "/var/lib/stagehand-deploy-agent" ||
+	if d.EnvironmentsDir != "/etc/puppetlabs/code/environments" || d.StateDir != "/var/lib/stagehand-deploy-agent" ||
 		d.Timeout.Std() != 15*time.Minute || d.OutputLimit != 262144 || d.MaxJobs != 500 {
 		t.Fatalf("deploys = %+v", d)
 	}

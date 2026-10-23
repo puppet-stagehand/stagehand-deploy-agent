@@ -131,7 +131,7 @@ func NewRunner(opts Options) (*Runner, error) {
 	case opts.Engine.Argv == nil || opts.Engine.Name == "" || opts.Engine.MarkerFile == "":
 		return nil, errors.New("jobs: engine is not configured")
 	case !filepath.IsAbs(opts.Basedir):
-		return nil, fmt.Errorf("jobs: basedir must be absolute, got %q", opts.Basedir)
+		return nil, fmt.Errorf("jobs: environments_dir must be absolute, got %q", opts.Basedir)
 	case opts.Timeout <= 0:
 		return nil, errors.New("jobs: timeout must be greater than zero")
 	case opts.OutputLimit <= 0:

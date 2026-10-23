@@ -106,11 +106,13 @@ type Engine struct {
 
 // Deploys is the job runner and its records.
 type Deploys struct {
-	Basedir     string   `yaml:"basedir"`
-	StateDir    string   `yaml:"state_dir"`
-	Timeout     Duration `yaml:"timeout"`
-	OutputLimit int      `yaml:"output_limit"`
-	MaxJobs     int      `yaml:"max_jobs"`
+	// EnvironmentsDir is where environments, and so their deploy markers,
+	// live. It matches the environments_dir field of GET /api/v1/info.
+	EnvironmentsDir string   `yaml:"environments_dir"`
+	StateDir        string   `yaml:"state_dir"`
+	Timeout         Duration `yaml:"timeout"`
+	OutputLimit     int      `yaml:"output_limit"`
+	MaxJobs         int      `yaml:"max_jobs"`
 	// ProtectedEnvironments are refused by DELETE (plan 05, D-10).
 	ProtectedEnvironments []string `yaml:"protected_environments"`
 }
@@ -164,6 +166,13 @@ func Locate(explicit, defaultPath, legacyPath string) (path string, legacy bool,
 	return "", false, fmt.Errorf("no config: write %s", defaultPath)
 }
 
+// renamedKeys are keys the native schema dropped before 1.0.0 was frozen. They
+// are refused like any unknown key (the agent was never released with them, so
+// there is no alias), but the finding says what replaced them.
+var renamedKeys = map[string]string{
+	"deploys.basedir": "deploys.environments_dir",
+}
+
 // Parse is Load for bytes; name is used in messages.
 func Parse(b []byte, name string, legacy bool) (*Config, []Finding) {
 	if legacy {
@@ -182,6 +191,10 @@ func parseNative(b []byte, name string) (*Config, []Finding) {
 		fs = append(fs, errorf("document", "more than one YAML document; keep exactly one"))
 	}
 	for _, u := range sc.unknown {
+		if now, renamed := renamedKeys[u.key]; renamed {
+			fs = append(fs, errorf(u.key, "unknown key (line %d); it is now called %s", u.line, now))
+			continue
+		}
 		fs = append(fs, errorf(u.key, "unknown key (line %d); check the spelling against packaging/config.example.yml", u.line))
 	}
 
@@ -236,8 +249,8 @@ func (c *Config) applyDefaults(has func(string) bool) {
 	if c.Engine.GenerateTypes == nil {
 		c.Engine.GenerateTypes = boolPtr(true)
 	}
-	if c.Deploys.Basedir == "" {
-		c.Deploys.Basedir = "/etc/puppetlabs/code/environments"
+	if c.Deploys.EnvironmentsDir == "" {
+		c.Deploys.EnvironmentsDir = "/etc/puppetlabs/code/environments"
 	}
 	if c.Deploys.StateDir == "" {
 		c.Deploys.StateDir = "/var/lib/stagehand-deploy-agent"
@@ -335,8 +348,8 @@ func (c *Config) Validate() []Finding {
 	}
 
 	d := c.Deploys
-	if !isAbs(d.Basedir) {
-		fs = append(fs, errorf("deploys.basedir", "must be an absolute path, got %q", d.Basedir))
+	if !isAbs(d.EnvironmentsDir) {
+		fs = append(fs, errorf("deploys.environments_dir", "must be an absolute path, got %q", d.EnvironmentsDir))
 	}
 	if !isAbs(d.StateDir) {
 		fs = append(fs, errorf("deploys.state_dir", "must be an absolute path, got %q", d.StateDir))

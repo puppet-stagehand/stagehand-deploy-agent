@@ -55,7 +55,7 @@ func TestLegacyModuleFileMapsSettingForSetting(t *testing.T) {
 		t.Fatalf("engine = %+v", c.Engine)
 	}
 	d := c.Deploys
-	if d.Basedir != "/etc/puppetlabs/code/environments" || d.StateDir != "/var/lib/webhook-go" ||
+	if d.EnvironmentsDir != "/etc/puppetlabs/code/environments" || d.StateDir != "/var/lib/webhook-go" ||
 		d.Timeout.Std() != 15*time.Minute || d.OutputLimit != 262144 || d.MaxJobs != 500 {
 		t.Fatalf("deploys = %+v", d)
 	}
@@ -177,7 +177,7 @@ func TestLegacyDefaultsAreTheForksOwn(t *testing.T) {
 		!*e.Verbose || !*e.DeployModules || !*e.GenerateTypes || e.EnvIncremental || e.UseLegacyPuppetfileFlag {
 		t.Fatalf("engine = %+v", e)
 	}
-	if d.Basedir != "/etc/puppetlabs/code/environments" || d.StateDir != "/var/lib/webhook-go" ||
+	if d.EnvironmentsDir != "/etc/puppetlabs/code/environments" || d.StateDir != "/var/lib/webhook-go" ||
 		d.Timeout.Std() != 15*time.Minute || d.OutputLimit != 262144 || d.MaxJobs != 500 {
 		t.Fatalf("deploys = %+v", d)
 	}

@@ -42,7 +42,7 @@ type Options struct {
 	// OpsListen is the plain-HTTP ops listener address (ops.listen). Empty
 	// means no ops listener.
 	OpsListen string
-	// EnginePath (engine.command_path) and EnvironmentsDir (deploys.basedir)
+	// EnginePath (engine.command_path) and EnvironmentsDir (deploys.environments_dir)
 	// are what /readyz checks the engine and the writable directory against.
 	EnginePath      string
 	EnvironmentsDir string
@@ -191,7 +191,7 @@ func OptionsFromConfigBuild(ctx context.Context, cfg *config.Config, log *slog.L
 	runner, err := jobs.NewRunner(jobs.Options{
 		Observer:    reg,
 		Engine:      eng,
-		Basedir:     cfg.Deploys.Basedir,
+		Basedir:     cfg.Deploys.EnvironmentsDir,
 		Timeout:     cfg.Deploys.Timeout.Std(),
 		OutputLimit: cfg.Deploys.OutputLimit,
 		Store:       store,
@@ -214,7 +214,7 @@ func OptionsFromConfigBuild(ctx context.Context, cfg *config.Config, log *slog.L
 		ProtectedEnvironments: cfg.Deploys.ProtectedEnvironments,
 		OpsListen:             cfg.Ops.Listen,
 		EnginePath:            cfg.Engine.CommandPath,
-		EnvironmentsDir:       cfg.Deploys.Basedir,
+		EnvironmentsDir:       cfg.Deploys.EnvironmentsDir,
 		Metrics:               reg,
 		Build:                 build,
 	}, nil

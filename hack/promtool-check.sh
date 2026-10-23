@@ -101,7 +101,7 @@ engine:
   name: r10k
   command_path: $TMP/fakeengine
 deploys:
-  basedir: $TMP/environments
+  environments_dir: $TMP/environments
   state_dir: $TMP/state
   timeout: 1m
 CFG
