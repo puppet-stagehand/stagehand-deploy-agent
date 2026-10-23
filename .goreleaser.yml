@@ -1,0 +1,156 @@
+version: 2
+# Stagehand deploy agent release configuration.
+#
+# What it produces, for linux amd64 and arm64: a static binary in a tar.gz, a deb
+# and an rpm named stagehand-deploy-agent that replace the fork's webhook-go
+# package, sha256 checksums, a keyless cosign bundle over the checksums file, and
+# an SPDX SBOM per archive and package. It creates the GitHub release as a DRAFT.
+# .github/workflows/release.yml verifies the signature, the checksums and the
+# provenance and builds, pushes and signs the container image, and only then
+# publishes the draft (FORK-WR-06: nothing is public before it verifies).
+#
+# There is no `dockers` section on purpose. goreleaser would push the image in the
+# same run, before any of those checks, and `dockers` is deprecated in favour of
+# `dockers_v2`. The workflow builds the image from the archives instead.
+#
+# Local proof without publishing or signing:
+#   GORELEASER_CURRENT_TAG=v1.0.0 goreleaser release --snapshot --clean --skip=sign,sbom,publish
+# (hack/package-smoke.sh does this and then installs the packages in containers).
+before:
+  hooks:
+    - go mod download
+builds:
+  - id: stagehand-deploy-agent
+    binary: stagehand-deploy-agent
+    main: ./cmd/stagehand-deploy-agent
+    env:
+      - CGO_ENABLED=0
+    flags:
+      - -trimpath
+    ldflags:
+      - -s -w -X main.version={{ .Version }}
+    goos:
+      - linux
+    goarch:
+      - amd64
+      - arm64
+archives:
+  - id: stagehand-deploy-agent
+    ids:
+      - stagehand-deploy-agent
+    formats:
+      - tar.gz
+    files:
+      - LICENSE
+      - NOTICE
+      - README*
+nfpms:
+  - id: stagehand-deploy-agent
+    package_name: stagehand-deploy-agent
+    ids:
+      - stagehand-deploy-agent
+    vendor: Puppet Stagehand
+    homepage: https://github.com/puppet-stagehand/stagehand-deploy-agent
+    maintainer: Puppet Stagehand <https://github.com/puppet-stagehand/stagehand-deploy-agent/issues>
+    description: |-
+      Stagehand deploy agent: the service on a Puppet Core primary that the
+      Stagehand console calls to deploy Puppet code. It runs r10k (or g10k) as an
+      unprivileged user and answers over mutual TLS. It replaces the Stagehand
+      fork of webhook-go.
+    license: Apache-2.0
+    formats:
+      - deb
+      - rpm
+    bindir: /usr/bin
+    # Installing this package removes the fork's webhook-go (deb: Conflicts plus
+    # Replaces; rpm: Conflicts plus Obsoletes). The module still removes the old
+    # package explicitly, after a guarded stop, so a deploy is never cut short.
+    replaces:
+      - webhook-go
+    conflicts:
+      - webhook-go
+    # No conffile: the module or the operator writes /etc/stagehand-deploy-agent/config.yml,
+    # so a package upgrade never prompts about a file Puppet manages. The examples
+    # are documentation.
+    contents:
+      - src: packaging/stagehand-deploy-agent.service
+        dst: /usr/lib/systemd/system/stagehand-deploy-agent.service
+        file_info:
+          mode: 0644
+      - src: packaging/config.example.yml
+        dst: /usr/share/doc/stagehand-deploy-agent/config.example.yml
+        file_info:
+          mode: 0644
+      - src: packaging/ssh_config.example
+        dst: /usr/share/doc/stagehand-deploy-agent/ssh_config.example
+        file_info:
+          mode: 0644
+      - src: LICENSE
+        dst: /usr/share/doc/stagehand-deploy-agent/LICENSE
+        file_info:
+          mode: 0644
+      - src: NOTICE
+        dst: /usr/share/doc/stagehand-deploy-agent/NOTICE
+        file_info:
+          mode: 0644
+    scripts:
+      preinstall: packaging/scripts/preinstall.sh
+      postinstall: packaging/scripts/postinstall.sh
+      preremove: packaging/scripts/preremove.sh
+      postremove: packaging/scripts/postremove.sh
+checksum:
+  name_template: checksums.txt
+  algorithm: sha256
+signs:
+  # Keyless cosign (no key: field). Under GitHub Actions with id-token: write,
+  # cosign gets a short-lived Sigstore certificate for this repository's release
+  # workflow. Only checksums.txt is signed: it lists the sha256 of every archive
+  # and package, so one signature covers them all. The bundle
+  # (checksums.txt.sigstore.json) carries the signature and the certificate.
+  - cmd: cosign
+    signature: "${artifact}.sigstore.json"
+    args:
+      - sign-blob
+      - --bundle=${signature}
+      - --yes
+      - ${artifact}
+    artifacts: checksum
+sboms:
+  # syft (installed by the release workflow) writes one SPDX SBOM per artifact.
+  - id: archive-sbom
+    artifacts: archive
+  - id: package-sbom
+    artifacts: package
+release:
+  github:
+    owner: puppet-stagehand
+    name: stagehand-deploy-agent
+  # A draft: the release workflow publishes it only after the signature,
+  # checksums, provenance and image signature verify (FORK-WR-06).
+  draft: true
+  prerelease: auto
+  name_template: "Release v{{ .Version }}"
+  header: |
+    The Stagehand deploy agent: the service on a Puppet Core primary that the
+    Stagehand console calls to deploy Puppet code. It replaces the Stagehand fork
+    of webhook-go.
+
+    Verify before you pin (needs cosign 2.4 or later; 3.x recommended):
+
+    ```sh
+    cosign verify-blob --bundle checksums.txt.sigstore.json \
+      --certificate-identity "https://github.com/puppet-stagehand/stagehand-deploy-agent/.github/workflows/release.yml@refs/tags/{{ .Tag }}" \
+      --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+      checksums.txt
+    sha256sum -c --ignore-missing checksums.txt
+    ```
+
+    The container image holds only the agent binary, for --check-config, tests and the contract harness; it is not a deploy runtime.
+snapshot:
+  version_template: "{{ .Version }}-snapshot"
+changelog:
+  sort: asc
+  filters:
+    exclude:
+      - "^docs:"
+      - "^test:"
