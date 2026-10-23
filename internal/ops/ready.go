@@ -2,7 +2,7 @@ package ops
 
 // Readiness (D-07, PD-34). /readyz is strict about hard failures and silent
 // about an expiry that is only coming up: that is the job of the
-// *_days_until_expiry gauges, which an alert can watch. The check names are
+// *_seconds_until_expiry gauges, which an alert can watch. The check names are
 // fixed and no path, error text or certname ever reaches the response, so an
 // unauthenticated reader learns which check failed and nothing about the host.
 

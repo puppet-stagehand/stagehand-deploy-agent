@@ -88,14 +88,14 @@ func TestMetricsScrapeThroughTheOpsListener(t *testing.T) {
 			t.Errorf("the scrape lacks %s", want)
 		}
 	}
-	m := regexp.MustCompile(`(?m)^stagehand_deploy_agent_server_certificate_days_until_expiry (\S+)$`).FindStringSubmatch(out)
+	m := regexp.MustCompile(`(?m)^stagehand_deploy_agent_server_certificate_seconds_until_expiry (\S+)$`).FindStringSubmatch(out)
 	if m == nil {
 		t.Fatalf("no certificate expiry gauge:\n%s", out)
 	}
-	if days, err := strconv.ParseFloat(m[1], 64); err != nil || days <= 0 || days >= 1 {
-		t.Fatalf("certificate days = %q, want a fraction of a day (the fixture certificate lasts an hour)", m[1])
+	if secs, err := strconv.ParseFloat(m[1], 64); err != nil || secs <= 0 || secs >= 86400 {
+		t.Fatalf("certificate seconds = %q, want under a day (the fixture certificate lasts an hour)", m[1])
 	}
-	if strings.Contains(out, "crl_days_until_expiry ") {
+	if strings.Contains(out, "crl_seconds_until_expiry ") {
 		t.Fatal("a CRL gauge is exposed although no CRL is configured")
 	}
 	for _, leak := range []string{"feature_x", "intruder", tracerSHA} {
@@ -119,12 +119,12 @@ func TestMetricsCRLGaugeWithACRL(t *testing.T) {
 	}
 	_ = srv
 	out := scrape(t, m)
-	mm := regexp.MustCompile(`(?m)^stagehand_deploy_agent_crl_days_until_expiry (\S+)$`).FindStringSubmatch(out)
+	mm := regexp.MustCompile(`(?m)^stagehand_deploy_agent_crl_seconds_until_expiry (\S+)$`).FindStringSubmatch(out)
 	if mm == nil {
 		t.Fatalf("no CRL gauge with a CRL configured:\n%s", out)
 	}
-	if days, _ := strconv.ParseFloat(mm[1], 64); days < 0.9 || days > 1.1 {
-		t.Fatalf("CRL days = %q, want about 1 (the test CRL lasts 24h)", mm[1])
+	if secs, _ := strconv.ParseFloat(mm[1], 64); secs < 0.9*86400 || secs > 1.1*86400 {
+		t.Fatalf("CRL seconds = %q, want about 86400 (the test CRL lasts 24h)", mm[1])
 	}
 }
 

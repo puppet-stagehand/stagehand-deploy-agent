@@ -243,29 +243,29 @@ func TestQueueGauges(t *testing.T) {
 	}
 }
 
-// TestExpiryGaugesAreComputedAtScrapeTime: days until expiry follow the clock,
+// TestExpiryGaugesAreComputedAtScrapeTime: seconds until expiry follow the clock,
 // go negative once expired, and the CRL gauge is absent without a CRL.
 func TestExpiryGaugesAreComputedAtScrapeTime(t *testing.T) {
 	now := t0
 	r := New("1.0.0", "r10k", func() time.Time { return now })
-	if out := text(t, r); strings.Contains(out, "days_until_expiry ") {
+	if out := text(t, r); strings.Contains(out, "seconds_until_expiry ") {
 		t.Fatalf("an expiry gauge is exposed before any source is set:\n%s", out)
 	}
 	certEnd := t0.Add(10 * 24 * time.Hour)
 	r.SetExpirySources(func() (time.Time, bool) { return certEnd, true }, nil)
 	out := text(t, r)
-	if !strings.Contains(out, "stagehand_deploy_agent_server_certificate_days_until_expiry 10\n") {
-		t.Fatalf("10 days left not shown:\n%s", out)
+	if !strings.Contains(out, "stagehand_deploy_agent_server_certificate_seconds_until_expiry 864000\n") {
+		t.Fatalf("10 days (864000 seconds) left not shown:\n%s", out)
 	}
-	if strings.Contains(out, "stagehand_deploy_agent_crl_days_until_expiry ") {
+	if strings.Contains(out, "stagehand_deploy_agent_crl_seconds_until_expiry ") {
 		t.Fatalf("the CRL gauge is exposed without a CRL:\n%s", out)
 	}
 	now = t0.Add(12*24*time.Hour + 12*time.Hour)
-	if out = text(t, r); !strings.Contains(out, "stagehand_deploy_agent_server_certificate_days_until_expiry -2.5\n") {
+	if out = text(t, r); !strings.Contains(out, "stagehand_deploy_agent_server_certificate_seconds_until_expiry -216000\n") {
 		t.Fatalf("expired certificate not negative:\n%s", out)
 	}
 	r.SetExpirySources(func() (time.Time, bool) { return certEnd, true }, func() (time.Time, bool) { return now.Add(36 * time.Hour), true })
-	if out = text(t, r); !strings.Contains(out, "stagehand_deploy_agent_crl_days_until_expiry 1.5\n") {
+	if out = text(t, r); !strings.Contains(out, "stagehand_deploy_agent_crl_seconds_until_expiry 129600\n") {
 		t.Fatalf("CRL gauge wrong:\n%s", out)
 	}
 }
@@ -276,18 +276,18 @@ func TestExpiryGaugesAreComputedAtScrapeTime(t *testing.T) {
 func TestNoUnboundedLabels(t *testing.T) {
 	r := New("1.0.0", "r10k", func() time.Time { return t0 })
 	want := map[string][]string{
-		"stagehand_deploy_agent_build_info":                           {"version", "engine"},
-		"stagehand_deploy_agent_ready":                                nil,
-		"stagehand_deploy_agent_http_requests_total":                  {"route", "code"},
-		"stagehand_deploy_agent_http_request_duration_seconds":        {"route"},
-		"stagehand_deploy_agent_jobs_total":                           {"kind", "outcome"},
-		"stagehand_deploy_agent_job_duration_seconds":                 {"kind"},
-		"stagehand_deploy_agent_jobs_in_flight":                       nil,
-		"stagehand_deploy_agent_jobs_queued":                          nil,
-		"stagehand_deploy_agent_requests_refused_total":               {"reason"},
-		"stagehand_deploy_agent_tls_refusals_total":                   {"reason"},
-		"stagehand_deploy_agent_server_certificate_days_until_expiry": nil,
-		"stagehand_deploy_agent_crl_days_until_expiry":                nil,
+		"stagehand_deploy_agent_build_info":                              {"version", "engine"},
+		"stagehand_deploy_agent_ready":                                   nil,
+		"stagehand_deploy_agent_http_requests_total":                     {"route", "code"},
+		"stagehand_deploy_agent_http_request_duration_seconds":           {"route"},
+		"stagehand_deploy_agent_jobs_total":                              {"kind", "outcome"},
+		"stagehand_deploy_agent_job_duration_seconds":                    {"kind"},
+		"stagehand_deploy_agent_jobs_in_flight":                          nil,
+		"stagehand_deploy_agent_jobs_queued":                             nil,
+		"stagehand_deploy_agent_requests_refused_total":                  {"reason"},
+		"stagehand_deploy_agent_tls_refusals_total":                      {"reason"},
+		"stagehand_deploy_agent_server_certificate_seconds_until_expiry": nil,
+		"stagehand_deploy_agent_crl_seconds_until_expiry":                nil,
 	}
 	got := r.Labels()
 	if len(got) != len(want) {

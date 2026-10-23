@@ -363,15 +363,15 @@ func New(version, engine string, clock func() time.Time) *Registry {
 	r.queued = r.Gauge("stagehand_deploy_agent_jobs_queued", "Jobs admitted and waiting for the deploy lock.")
 	r.refused = r.Counter("stagehand_deploy_agent_requests_refused_total", "Requests refused for a reason other than a bad certificate.", "reason")
 	r.tlsRefusals = r.Counter("stagehand_deploy_agent_tls_refusals_total", "Client certificates refused in the TLS handshake, by reason.", "reason")
-	r.GaugeFunc("stagehand_deploy_agent_server_certificate_days_until_expiry", "Days until the server certificate expires; negative once it has.", r.daysFunc(func() func() (time.Time, bool) { return r.certEnd }))
-	r.GaugeFunc("stagehand_deploy_agent_crl_days_until_expiry", "Days until the CRL's next update; negative once it has passed. Absent without a CRL.", r.daysFunc(func() func() (time.Time, bool) { return r.crlEnd }))
+	r.GaugeFunc("stagehand_deploy_agent_server_certificate_seconds_until_expiry", "Seconds until the server certificate expires; negative once it has.", r.secondsFunc(func() func() (time.Time, bool) { return r.certEnd }))
+	r.GaugeFunc("stagehand_deploy_agent_crl_seconds_until_expiry", "Seconds until the CRL's next update; negative once it has passed. Absent without a CRL.", r.secondsFunc(func() func() (time.Time, bool) { return r.crlEnd }))
 	r.inFlight.Set(0)
 	r.queued.Set(0)
 	return r
 }
 
-// daysFunc builds a scrape-time gauge from whichever source pick returns now.
-func (r *Registry) daysFunc(pick func() func() (time.Time, bool)) func() (float64, bool) {
+// secondsFunc builds a scrape-time gauge from whichever source pick returns now.
+func (r *Registry) secondsFunc(pick func() func() (time.Time, bool)) func() (float64, bool) {
 	return func() (float64, bool) {
 		r.srcMu.Lock()
 		src := pick()
@@ -383,7 +383,7 @@ func (r *Registry) daysFunc(pick func() func() (time.Time, bool)) func() (float6
 		if !ok {
 			return 0, false
 		}
-		return end.Sub(r.clock()).Hours() / 24, true
+		return end.Sub(r.clock()).Seconds(), true
 	}
 }
 

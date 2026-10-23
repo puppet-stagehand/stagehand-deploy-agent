@@ -7,10 +7,8 @@
 # in a throwaway container (a local promtool is used when docker is absent).
 # Prints "PROMTOOL OK" as its last line, or "PROMTOOL FAIL: <step>" and exits 1.
 #
-# One lint finding is accepted by name: promtool wants base units, so it asks
-# for "seconds" instead of "days" on the two *_days_until_expiry gauges. Those
-# names are the published contract (D-07, PD-33), so the finding is filtered
-# out of the verdict. Anything else promtool says fails the check.
+# No finding is accepted or filtered: the two certificate-expiry gauges are named
+# *_seconds_until_expiry (the Prometheus base unit), so promtool must pass clean.
 set -eu
 
 # The pinned image: tag for the reader, digest for the guarantee.
@@ -158,13 +156,7 @@ set +e
 run_promtool <scrape.txt >promtool.out 2>&1
 PRC=$?
 set -e
-KNOWN='^stagehand_deploy_agent_(server_certificate|crl)_days_until_expiry use base unit "seconds" instead of "days"$'
-grep -Ev "$KNOWN" promtool.out >promtool.rest || true
-if [ "$PRC" -ne 0 ] && [ -s promtool.rest ]; then
-	cat promtool.out
-	exit 1
-fi
-if [ "$PRC" -ne 0 ] && ! grep -Eq "$KNOWN" promtool.out; then
+if [ "$PRC" -ne 0 ] || [ -s promtool.out ]; then
 	cat promtool.out
 	exit 1
 fi
