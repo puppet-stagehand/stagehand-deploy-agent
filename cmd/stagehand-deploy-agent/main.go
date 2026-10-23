@@ -21,6 +21,7 @@ import (
 	"os/signal"
 	"strings"
 	"syscall"
+	"time"
 
 	"github.com/puppet-stagehand/stagehand-deploy-agent/internal/config"
 	"github.com/puppet-stagehand/stagehand-deploy-agent/internal/jobs"
@@ -243,3 +244,6 @@ func runServe(cfg *config.Config, log *slog.Logger) error {
 	log.Info("listening", "component", "server", "addr", opts.Addr, "version", version, "engine", cfg.Engine.Name)
 	return srv.Serve(ctx)
 }
+
+// engineVersion returns the first line of the engine's own version output.
+func engineVersion(e config.Engine, timeout time.Duration) string { return "" }

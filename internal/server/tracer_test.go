@@ -92,6 +92,13 @@ func newTracer(t *testing.T) *tracer {
 // instance) after the engine block.
 func newTracerWith(t *testing.T, extraTop string) *tracer {
 	t.Helper()
+	return newTracerBuild(t, extraTop, BuildInfo{})
+}
+
+// newTracerBuild is newTracerWith for a process that knows its version, its
+// engine's version and its config path.
+func newTracerBuild(t *testing.T, extraTop string, build BuildInfo) *tracer {
+	t.Helper()
 	exe, err := os.Executable()
 	if err != nil {
 		t.Fatal(err)
@@ -116,7 +123,7 @@ engine:
 	t.Setenv(fakeengine.ArgvLogEnv, argvLog)
 
 	ctx, cancel := context.WithCancel(context.Background())
-	opts, err := OptionsFromConfig(ctx, cfg, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	opts, err := OptionsFromConfigBuild(ctx, cfg, slog.New(slog.NewTextHandler(io.Discard, nil)), build)
 	if err != nil {
 		t.Fatal(err)
 	}
