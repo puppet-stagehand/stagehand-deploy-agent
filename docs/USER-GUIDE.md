@@ -102,8 +102,9 @@ By hand:
    identity above, never a pattern.
 3. Install: `dpkg -i stagehand-deploy-agent_1.0.0_linux_amd64.deb` or
    `rpm -Uvh stagehand-deploy-agent_1.0.0_linux_amd64.rpm`. If the old fork is installed, the new package removes
-   it (deb: `Replaces`/`Conflicts`; rpm: `Conflicts`, so remove the fork first with `rpm -e webhook-go`; the
-   module does this for you in a safe order).
+   it (deb: `Replaces`/`Conflicts`; rpm: an upgrade with `rpm -Uvh` removes the fork because the package obsoletes
+   it, while a plain `rpm -i` refuses and names the conflict, so run `rpm -e webhook-go` first). Stop the old
+   service when no deploy is running; the module does all of this for you in a safe order.
 4. Write `/etc/stagehand-deploy-agent/config.yml`, starting from the example the package installs at
    `/usr/share/doc/stagehand-deploy-agent/config.example.yml`. Replace `<certname>` with the host's Puppet
    certname.

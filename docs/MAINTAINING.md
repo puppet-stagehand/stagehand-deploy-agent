@@ -105,7 +105,8 @@ After a release is verified, update the pinned URL and sha256 in the `stagehand`
 ## Package names and versions
 
 The packages are named `stagehand-deploy-agent` and declare `Replaces` and `Conflicts` with `webhook-go`, so
-installing one removes the other (on rpm, remove `webhook-go` first). nfpm turns a pre-release tag into a tilde:
+installing one removes the other (on rpm, `rpm -U` replaces the fork because the package obsoletes it, while a plain
+`rpm -i` refuses and names the conflict). nfpm turns a pre-release tag into a tilde:
 `v1.1.0-rc.1` becomes package version `1.1.0~rc.1`, which sorts below `1.1.0`.
 
 ## Deprecated GoReleaser `dockers`
