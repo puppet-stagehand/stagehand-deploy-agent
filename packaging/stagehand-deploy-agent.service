@@ -1,5 +1,69 @@
+# Stagehand deploy agent: the unit the deb and rpm install at
+# /usr/lib/systemd/system (the vendor location). Do not edit it; the Puppet
+# module (or an operator) overrides it with a drop-in in
+# /etc/systemd/system/stagehand-deploy-agent.service.d/, which adds what is
+# specific to one node: LoadCredential= for the Puppet key (its path contains
+# the node's certname) and, when the Git remotes use ssh, the deploy key.
+#
+# The two ReadWritePaths= below are the defaults. A drop-in that moves the
+# environments directory or the r10k cache clears the list (an empty
+# ReadWritePaths=) and sets the real ones; both directories must exist before
+# the service starts or systemd fails it with status 226 before the agent runs.
+[Unit]
+Description=Stagehand deploy agent (deploys Puppet code for the Stagehand console)
+Documentation=https://github.com/puppet-stagehand/stagehand-deploy-agent
+After=network-online.target
+Wants=network-online.target
+
 [Service]
-Type=simple
+Type=exec
+# The agent owns the environments directory and the r10k cache, nothing else.
+# Group=puppet and UMask=0027 make new environment directories 0750 and files
+# 0640, which Puppet Server (user puppet) reads through the puppet group.
+User=stagehand-deploy-agent
+Group=puppet
+UMask=0027
+ExecStart=/usr/bin/stagehand-deploy-agent serve --config /etc/stagehand-deploy-agent/config.yml
+Restart=on-failure
+RestartSec=5s
+# mixed: SIGTERM goes to the agent, which drains an in-flight deploy; whatever
+# is still running after TimeoutStopSec gets SIGKILL. There is no ExecReload:
+# the agent reads its configuration once, at start.
+KillMode=mixed
+TimeoutStopSec=60
+StateDirectory=stagehand-deploy-agent
+StateDirectoryMode=0700
+# ssh takes the home directory from the passwd entry, not from $HOME; the
+# package creates the user with this same home. Git must never wait for a
+# password. The agent sets GIT_SSH_COMMAND itself from engine.ssh_config.
+Environment=HOME=/var/lib/stagehand-deploy-agent
+Environment=GIT_TERMINAL_PROMPT=0
+
+NoNewPrivileges=yes
+CapabilityBoundingSet=
+AmbientCapabilities=
+ProtectSystem=strict
+ReadWritePaths=/etc/puppetlabs/code/environments /opt/puppetlabs/puppet/cache/r10k
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+LockPersonality=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+RestrictNamespaces=yes
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+SystemCallArchitectures=native
+# Deliberately not stricter, and no MemoryDenyWriteExecute=: the engine is Ruby
+# (r10k) plus git and ssh, which inherit this filter. Tighten only after a lab
+# run (RESEARCH A14, A15). Add AF_NETLINK only if the lab shows resolver errors.
+SystemCallFilter=@system-service
+SystemCallErrorNumber=EPERM
 
 [Install]
-WantedBy=default.target
+WantedBy=multi-user.target

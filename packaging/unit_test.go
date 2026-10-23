@@ -157,7 +157,15 @@ func TestUnitOmitsWhatMustNotBeThere(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	text := string(raw)
+	// Directives only: the unit's comments explain why these are absent and
+	// name them.
+	var directives []string
+	for _, line := range strings.Split(string(raw), "\n") {
+		if l := strings.TrimSpace(line); l != "" && !strings.HasPrefix(l, "#") && !strings.HasPrefix(l, ";") {
+			directives = append(directives, l)
+		}
+	}
+	text := strings.Join(directives, "\n")
 	for _, banned := range []struct{ token, why string }{
 		{"ExecReload", "the agent has no reload; the fork's HUP reload is gone"},
 		{"MemoryDenyWriteExecute", "the engine is Ruby (r10k), which needs writable-executable memory (A14)"},

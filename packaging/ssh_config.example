@@ -1,0 +1,21 @@
+# Example ssh_config for the Stagehand deploy agent.
+#
+# The Puppet module renders the real file at /etc/stagehand-deploy-agent/ssh_config
+# (and the known_hosts file next to it); this copy only shows the shape. Point
+# engine.ssh_config in config.yml at the real file. The agent passes it to git as
+#   ssh -F /etc/stagehand-deploy-agent/ssh_config
+# so r10k's git never reads a user's ~/.ssh or an ssh agent.
+#
+# The deploy key arrives as a systemd credential (LoadCredential= in the unit's
+# drop-in), so it is never a file the agent user owns. Run `ssh-keyscan` against
+# your Git host once, check the fingerprint, and put the line in known_hosts: with
+# StrictHostKeyChecking yes an unknown host fails the deploy instead of being
+# trusted on first use.
+Host *
+    IdentityFile "/run/credentials/stagehand-deploy-agent.service/deploy_key"
+    IdentitiesOnly yes
+    IdentityAgent none
+    BatchMode yes
+    StrictHostKeyChecking yes
+    UserKnownHostsFile "/etc/stagehand-deploy-agent/known_hosts"
+    GlobalKnownHostsFile /dev/null
