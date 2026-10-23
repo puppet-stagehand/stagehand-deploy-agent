@@ -135,8 +135,14 @@ func TestObserverNotToldOfAJobThatNeverRan(t *testing.T) {
 	obs := &recObserver{}
 	r, _ := observedRunner(t, shaA, obs)
 	job, _ := r.NewJob([]EnvRequest{{Name: "production", ExpectedSHA: shaA}})
-	ctx, cancel := context.WithCancel(context.Background())
-	cancel()
+	// Another holder has the deploy lock; this job gives up waiting for it.
+	release, err := r.lock.Acquire(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer release()
+	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancel()
 	got, _ := r.Run(ctx, job)
 	if got.State != StateFailed {
 		t.Fatalf("state = %s, want failed", got.State)
@@ -180,10 +186,10 @@ func TestObserverQueueDepth(t *testing.T) {
 
 func TestRefusalReasonMapping(t *testing.T) {
 	for err, want := range map[error]string{
-		ErrBusy:                          "busy",
-		ErrShutdown:                      "shutdown",
+		ErrBusy:                            "busy",
+		ErrShutdown:                        "shutdown",
 		fmt.Errorf("wrapped: %w", ErrBusy): "busy",
-		errors.New("something else"):     "busy",
+		errors.New("something else"):       "busy",
 	} {
 		if got := refusalReason(err); got != want {
 			t.Errorf("refusalReason(%v) = %q, want %q", err, got, want)

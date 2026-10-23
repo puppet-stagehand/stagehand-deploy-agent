@@ -45,10 +45,12 @@ func NewEnvironmentHandlers(runner *jobs.Runner, protected []string, log *slog.L
 func (h *EnvironmentHandlers) remove(w http.ResponseWriter, r *http.Request) {
 	env := r.PathValue("env")
 	if !jobs.ValidEnvironmentName(env) {
+		h.runner.ObserveRefusal("remove", "invalid")
 		unprocessable(w, "environment", "must match ^[a-z0-9_]+$")
 		return
 	}
 	if h.protected[env] {
+		h.runner.ObserveRefusal("remove", "protected")
 		writeJSON(w, http.StatusForbidden, map[string]string{"error": "environment " + env + " is protected", "field": "environment"})
 		return
 	}
@@ -58,6 +60,7 @@ func (h *EnvironmentHandlers) remove(w http.ResponseWriter, r *http.Request) {
 		failure(w, http.StatusNotFound, "environment not found")
 		return
 	case errors.Is(err, jobs.ErrInvalidRequest):
+		h.runner.ObserveRefusal("remove", "invalid")
 		unprocessable(w, "environment", err.Error())
 		return
 	case err != nil:

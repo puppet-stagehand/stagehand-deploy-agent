@@ -200,7 +200,7 @@ func TestTLSRefusalsAndRequests(t *testing.T) {
 	r.TLSRefusal("certname")
 	r.TLSRefusal("revoked")
 	r.ObserveRequest("GET /api/v1/deploys/{id}", 404, 3*time.Millisecond)
-	r.ObserveRequest("unmatched", 404, time.Millisecond)
+	r.ObserveRequest("unmatched", 404, 10*time.Millisecond)
 	out := text(t, r)
 	for _, want := range []string{
 		`stagehand_deploy_agent_tls_refusals_total{reason="certname"} 2`,
@@ -208,7 +208,7 @@ func TestTLSRefusalsAndRequests(t *testing.T) {
 		`stagehand_deploy_agent_http_requests_total{route="GET /api/v1/deploys/{id}",code="404"} 1`,
 		`stagehand_deploy_agent_http_requests_total{route="unmatched",code="404"} 1`,
 		`stagehand_deploy_agent_http_request_duration_seconds_bucket{route="unmatched",le="0.005"} 0`,
-		`stagehand_deploy_agent_http_request_duration_seconds_bucket{route="unmatched",le="0.025"} 1`,
+		`stagehand_deploy_agent_http_request_duration_seconds_bucket{route="unmatched",le="0.01"} 1`,
 		`stagehand_deploy_agent_http_request_duration_seconds_bucket{route="unmatched",le="+Inf"} 1`,
 	} {
 		if !strings.Contains(out, want) {
@@ -248,16 +248,12 @@ func TestQueueGauges(t *testing.T) {
 func TestExpiryGaugesAreComputedAtScrapeTime(t *testing.T) {
 	now := t0
 	r := New("1.0.0", "r10k", func() time.Time { return now })
-	out := text(t, r)
-	if strings.Contains(out, "days_until_expiry") && !strings.Contains(out, "absent") {
-		// Without sources neither gauge has a sample.
-		if strings.Contains(out, "stagehand_deploy_agent_server_certificate_days_until_expiry ") {
-			t.Fatalf("a certificate gauge is exposed before any source is set:\n%s", out)
-		}
+	if out := text(t, r); strings.Contains(out, "days_until_expiry ") {
+		t.Fatalf("an expiry gauge is exposed before any source is set:\n%s", out)
 	}
 	certEnd := t0.Add(10 * 24 * time.Hour)
 	r.SetExpirySources(func() (time.Time, bool) { return certEnd, true }, nil)
-	out = text(t, r)
+	out := text(t, r)
 	if !strings.Contains(out, "stagehand_deploy_agent_server_certificate_days_until_expiry 10\n") {
 		t.Fatalf("10 days left not shown:\n%s", out)
 	}

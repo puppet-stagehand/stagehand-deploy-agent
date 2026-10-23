@@ -152,6 +152,11 @@ func buildMTLSServer(addr string, t TLSConfig, handler http.Handler, log *slog.L
 		pins[norm] = true
 	}
 	tlog := log.With("component", "tls")
+	refused := func(reason string) {
+		if t.RefusalCounter != nil {
+			t.RefusalCounter(reason)
+		}
+	}
 
 	srv := &http.Server{
 		Addr:              addr,
@@ -172,6 +177,7 @@ func buildMTLSServer(addr string, t TLSConfig, handler http.Handler, log *slog.L
 			// session skips it (TestMTLSAllowListEnforcedOnResumedSession).
 			VerifyConnection: func(cs tls.ConnectionState) error {
 				if len(cs.VerifiedChains) == 0 || len(cs.VerifiedChains[0]) == 0 {
+					refused("certname")
 					return errCertnameNotAllowed
 				}
 				chain := cs.VerifiedChains[0]
@@ -180,6 +186,7 @@ func buildMTLSServer(addr string, t TLSConfig, handler http.Handler, log *slog.L
 				// Log the certname and serial only; never the certificate.
 				if !allowed[cn] {
 					tlog.Warn("refused client certificate: certname not allowed", "certname", cn)
+					refused("certname")
 					return errCertnameNotAllowed
 				}
 				if crl != nil {
@@ -187,12 +194,14 @@ func buildMTLSServer(addr string, t TLSConfig, handler http.Handler, log *slog.L
 					for _, c := range chain[:max(1, len(chain)-1)] {
 						if crl.Revoked(c) {
 							tlog.Warn("refused client certificate: revoked", "certname", cn, "serial", c.SerialNumber.String())
+							refused("revoked")
 							return errCertRevoked
 						}
 					}
 				}
 				if len(pins) > 0 && !pins[fingerprint(leaf)] {
 					tlog.Warn("refused client certificate: fingerprint not pinned", "certname", cn)
+					refused("fingerprint")
 					return errCertNotPinned
 				}
 				return nil

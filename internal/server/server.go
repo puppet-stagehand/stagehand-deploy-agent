@@ -49,6 +49,17 @@ type Options struct {
 	// Metrics is the registry the middleware, the handshake and the ops
 	// listener report to. Nil means a private one.
 	Metrics *metrics.Registry
+	// Build describes this process for build_info and /api/v1/info.
+	Build BuildInfo
+}
+
+// BuildInfo is what main knows about the running process and the server does
+// not: the version, the engine's own version line (empty when the engine did
+// not answer) and the path of the configuration file that was loaded.
+type BuildInfo struct {
+	Version       string
+	EngineVersion string
+	ConfigSource  string
 }
 
 // Server is the mTLS deploy API.
@@ -76,7 +87,16 @@ func New(o Options) (*Server, error) {
 	if log == nil {
 		log = slog.Default()
 	}
-	srv, crl, err := newMTLSServer(o.Addr, o.TLS, NewMux(NewDeployHandlers(o.Runner, log), NewEnvironmentHandlers(o.Runner, o.ProtectedEnvironments, log)), log)
+	reg := o.Metrics
+	if reg == nil {
+		reg = metrics.New(versionOrDev(o.Build.Version), o.Runner.Engine(), time.Now)
+	}
+	tlsCfg := o.TLS
+	if tlsCfg.RefusalCounter == nil {
+		tlsCfg.RefusalCounter = reg.TLSRefusal
+	}
+	mux := NewMux(NewDeployHandlers(o.Runner, log), NewEnvironmentHandlers(o.Runner, o.ProtectedEnvironments, log))
+	srv, crl, err := newMTLSServer(o.Addr, tlsCfg, Wrap(mux, log, reg), log)
 	if err != nil {
 		return nil, err
 	}
@@ -85,11 +105,28 @@ func New(o Options) (*Server, error) {
 	if crl != nil { // a nil *crlSet in the interface would not be a nil source
 		s.checks.CRL = crl
 	}
+	certPath := o.TLS.Certificate
+	var crlSource func() (time.Time, bool)
+	if crl != nil {
+		crlSource = func() (time.Time, bool) { n := crl.NextUpdate(); return n, !n.IsZero() }
+	}
+	reg.SetReadySource(s.checks.Ready)
+	reg.SetExpirySources(func() (time.Time, bool) {
+		t, err := ops.CertNotAfter(certPath)
+		return t, err == nil
+	}, crlSource)
 	if o.OpsListen != "" {
 		s.opsAddr = o.OpsListen
-		s.ops = &http.Server{Handler: ops.NewMux(s.checks, nil), ReadHeaderTimeout: 5 * time.Second}
+		s.ops = &http.Server{Handler: ops.NewMux(s.checks, reg.Handler()), ReadHeaderTimeout: 5 * time.Second}
 	}
 	return s, nil
+}
+
+func versionOrDev(v string) string {
+	if v == "" {
+		return "dev"
+	}
+	return v
 }
 
 // OptionsFromConfig builds the store and the runner for cfg, in the order the
@@ -99,6 +136,14 @@ func New(o Options) (*Server, error) {
 // runner's base context: cancelling it stops running engines and fails queued
 // jobs.
 func OptionsFromConfig(ctx context.Context, cfg *config.Config, log *slog.Logger) (Options, error) {
+	return OptionsFromConfigBuild(ctx, cfg, log, BuildInfo{})
+}
+
+// OptionsFromConfigBuild is OptionsFromConfig for a process that knows its
+// version, its engine's version and where its configuration came from. It
+// also builds the metrics registry and hands the runner the observer that
+// feeds it.
+func OptionsFromConfigBuild(ctx context.Context, cfg *config.Config, log *slog.Logger, build BuildInfo) (Options, error) {
 	if log == nil {
 		log = slog.Default()
 	}
@@ -120,7 +165,9 @@ func OptionsFromConfig(ctx context.Context, cfg *config.Config, log *slog.Logger
 	if rep.Interrupted > 0 {
 		log.Warn("deploys interrupted by a restart were marked failed", "component", "server", "count", rep.Interrupted)
 	}
+	reg := metrics.New(versionOrDev(build.Version), cfg.Engine.Name, time.Now)
 	runner, err := jobs.NewRunner(jobs.Options{
+		Observer:    reg,
 		Engine:      eng,
 		Basedir:     cfg.Deploys.Basedir,
 		Timeout:     cfg.Deploys.Timeout.Std(),
@@ -137,7 +184,7 @@ func OptionsFromConfig(ctx context.Context, cfg *config.Config, log *slog.Logger
 	t := cfg.Server.TLS
 	return Options{
 		Addr:   fmt.Sprintf("%s:%d", cfg.Server.Address, cfg.Server.Port),
-		TLS:    TLSConfig{Certificate: t.Certificate, Key: t.Key, ClientCA: t.ClientCA, CRL: t.CRL, AllowedCertnames: t.AllowedCertnames, AllowedFingerprints: t.AllowedFingerprints},
+		TLS:    TLSConfig{Certificate: t.Certificate, Key: t.Key, ClientCA: t.ClientCA, CRL: t.CRL, AllowedCertnames: t.AllowedCertnames, AllowedFingerprints: t.AllowedFingerprints, RefusalCounter: reg.TLSRefusal},
 		Runner: runner,
 		Store:  store,
 		Logger: log,
@@ -146,6 +193,8 @@ func OptionsFromConfig(ctx context.Context, cfg *config.Config, log *slog.Logger
 		OpsListen:             cfg.Ops.Listen,
 		EnginePath:            cfg.Engine.CommandPath,
 		EnvironmentsDir:       cfg.Deploys.Basedir,
+		Metrics:               reg,
+		Build:                 build,
 	}, nil
 }
 

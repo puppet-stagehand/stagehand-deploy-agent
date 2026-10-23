@@ -120,7 +120,8 @@ type Runner struct {
 	wg     sync.WaitGroup // admitted jobs, counted in reserve, released in release
 
 	pendMu  sync.Mutex
-	pending int
+	pending int // admitted and not yet released: queued or running
+	running int // holding the deploy lock
 	closed  bool
 }
 
@@ -166,6 +167,7 @@ func (r *Runner) reserve() error {
 	}
 	r.pending++
 	r.wg.Add(1)
+	r.notifyQueue()
 	return nil
 }
 
@@ -174,8 +176,17 @@ func (r *Runner) reserve() error {
 func (r *Runner) release() {
 	r.pendMu.Lock()
 	r.pending--
+	r.notifyQueue()
 	r.pendMu.Unlock()
 	r.wg.Done()
+}
+
+// setRunning records a job taking (+1) or giving back (-1) the deploy lock.
+func (r *Runner) setRunning(delta int) {
+	r.pendMu.Lock()
+	r.running += delta
+	r.notifyQueue()
+	r.pendMu.Unlock()
 }
 
 // Start runs job in the background on the runner's base context and returns
@@ -284,6 +295,7 @@ func FailUnstarted(job Job, reason string) Job {
 // answer names its id) but through SaveRefused, which keeps refusals out of the
 // history limit (PD-17).
 func (r *Runner) Refuse(job Job, reason error) (Job, error) {
+	r.ObserveRefusal(kindLabel(job.Kind), refusalReason(reason))
 	job = FailUnstarted(job, reason.Error())
 	return job, r.opts.Store.SaveRefused(job)
 }
@@ -304,14 +316,22 @@ func (r *Runner) Run(ctx context.Context, job Job) (Job, error) {
 			reason = "not run: " + ErrShutdown.Error()
 		}
 		job = FailUnstarted(job, reason)
-		return job, r.opts.Store.Save(job)
+		err := r.opts.Store.Save(job)
+		r.finished(job, 0)
+		return job, err
 	}
 	defer release()
 
 	started := time.Now().UTC()
 	job.StartedAt = &started
 	job.State = StateDeploying
+	r.setRunning(1)
+	defer r.setRunning(-1)
+	if r.opts.Observer != nil {
+		r.opts.Observer.JobStarted(kindLabel(job.Kind))
+	}
 	if err := r.opts.Store.Save(job); err != nil {
+		r.finished(FailUnstarted(job, "not recorded"), time.Since(started))
 		return job, err
 	}
 
@@ -344,7 +364,16 @@ func (r *Runner) Run(ctx context.Context, job Job) (Job, error) {
 	if !all {
 		job.State = StateFailed
 	}
-	return job, r.opts.Store.Save(job)
+	err = r.opts.Store.Save(job)
+	r.finished(job, finished.Sub(started))
+	return job, err
+}
+
+// finished tells the Observer a job is over.
+func (r *Runner) finished(job Job, d time.Duration) {
+	if r.opts.Observer != nil {
+		r.opts.Observer.JobFinished(kindLabel(job.Kind), string(job.State), d)
+	}
 }
 
 func (r *Runner) deployOne(ctx context.Context, res EnvResult) EnvResult {
@@ -496,15 +525,57 @@ func (b *tailBuffer) snapshot() (string, bool) {
 	return string(b.buf), b.truncated
 }
 
-// Observer is told what the runner does.
+// Observer is told what the runner does. Metrics implement it. Calls are
+// made while the runner holds a lock for the queue depth, so an Observer must
+// return quickly and must not call back into the runner.
 type Observer interface {
+	// JobStarted is called when a job takes the deploy lock.
 	JobStarted(kind string)
+	// JobFinished is called once the job's final record is written. outcome is
+	// "deployed" or "failed"; d is how long the job held the lock, zero if it
+	// never ran.
 	JobFinished(kind, outcome string, d time.Duration)
+	// Refused is called when a request was turned away: busy and shutdown by
+	// the runner, protected and invalid by the handlers (via ObserveRefusal).
 	Refused(kind, reason string)
+	// Queue reports the jobs admitted and waiting, and the jobs holding the lock.
 	Queue(queued, inFlight int)
 }
 
-// ObserveRefusal reports a request refused before it became a job.
-func (r *Runner) ObserveRefusal(kind, reason string) {}
+// kindLabel is the metric and log name of a job's kind: "deploy" or "remove".
+func kindLabel(k string) string {
+	if k == KindRemove {
+		return "remove"
+	}
+	return "deploy"
+}
 
-func refusalReason(err error) string { return "" }
+// refusalReason names why the runner turned a job away.
+func refusalReason(err error) string {
+	if errors.Is(err, ErrShutdown) {
+		return "shutdown"
+	}
+	return "busy"
+}
+
+// ObserveRefusal reports a request refused before it became a job, such as a
+// protected environment or an invalid request. kind is "deploy" or "remove".
+// It is safe on a nil Runner and with no Observer.
+func (r *Runner) ObserveRefusal(kind, reason string) {
+	if r == nil || r.opts.Observer == nil {
+		return
+	}
+	r.opts.Observer.Refused(kind, reason)
+}
+
+// notifyQueue tells the Observer the queue depth. The caller holds pendMu.
+func (r *Runner) notifyQueue() {
+	if r.opts.Observer == nil {
+		return
+	}
+	queued := r.pending - r.running
+	if queued < 0 { // Run called directly, without an admission
+		queued = 0
+	}
+	r.opts.Observer.Queue(queued, r.running)
+}

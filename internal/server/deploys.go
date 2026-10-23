@@ -110,6 +110,7 @@ func (h *DeployHandlers) create(w http.ResponseWriter, r *http.Request) {
 	r.Body = http.MaxBytesReader(w, r.Body, maxDeployBody)
 	dec := json.NewDecoder(r.Body)
 	if err := dec.Decode(&req); err != nil {
+		h.runner.ObserveRefusal("deploy", "invalid")
 		if tooLarge(err) {
 			failure(w, http.StatusRequestEntityTooLarge, bodyTooLarge)
 			return
@@ -120,6 +121,7 @@ func (h *DeployHandlers) create(w http.ResponseWriter, r *http.Request) {
 	// Exactly one JSON value: anything after it but whitespace is refused. The
 	// read also runs into the size cap, so padding after the object is a 413.
 	if err := dec.Decode(new(json.RawMessage)); !errors.Is(err, io.EOF) {
+		h.runner.ObserveRefusal("deploy", "invalid")
 		if tooLarge(err) {
 			failure(w, http.StatusRequestEntityTooLarge, bodyTooLarge)
 			return
@@ -128,6 +130,7 @@ func (h *DeployHandlers) create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if field, msg := req.validate(); field != "" {
+		h.runner.ObserveRefusal("deploy", "invalid")
 		unprocessable(w, field, msg)
 		return
 	}
@@ -135,6 +138,7 @@ func (h *DeployHandlers) create(w http.ResponseWriter, r *http.Request) {
 	job, err := h.runner.NewJob(req.Environments)
 	if err != nil {
 		if errors.Is(err, jobs.ErrInvalidRequest) {
+			h.runner.ObserveRefusal("deploy", "invalid")
 			unprocessable(w, "environments", err.Error())
 			return
 		}
