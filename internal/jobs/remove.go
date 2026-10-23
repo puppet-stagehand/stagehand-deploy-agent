@@ -90,3 +90,6 @@ func (r *Runner) removeOne(ctx context.Context, res EnvResult, jobID string) Env
 	}
 	return finish(StateDeployed, 0, "")
 }
+
+// SweepRemovals is a stub until the GREEN commit.
+func (r *Runner) SweepRemovals() (int, error) { return 0, nil }

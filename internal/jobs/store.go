@@ -516,3 +516,6 @@ func (s *FileStore) pruneLocked() {
 		}
 	}
 }
+
+// ListKind is a stub until the GREEN commit.
+func (s *FileStore) ListKind(kind string, limit int) ([]Job, error) { return s.List(limit) }

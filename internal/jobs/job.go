@@ -125,8 +125,11 @@ type Store interface {
 	SaveRefused(job Job) error
 	// Get returns the job with id, or ErrNotFound.
 	Get(id string) (Job, error)
-	// List returns up to limit jobs, newest first.
+	// List returns up to limit jobs of every kind, newest first.
 	List(limit int) ([]Job, error)
+	// ListKind returns up to limit jobs whose Kind is kind ("" for deploys,
+	// KindRemove for removals), newest first (PD-21).
+	ListKind(kind string, limit int) ([]Job, error)
 }
 
 // MemoryStore is a bounded in-memory Store for tests. History is lost on
@@ -220,3 +223,6 @@ func (s *MemoryStore) List(limit int) ([]Job, error) {
 	}
 	return out, nil
 }
+
+// ListKind is a stub until the GREEN commit.
+func (s *MemoryStore) ListKind(kind string, limit int) ([]Job, error) { return s.List(limit) }

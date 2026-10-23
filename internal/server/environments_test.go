@@ -6,6 +6,7 @@ package server
 
 import (
 	"encoding/json"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
@@ -205,5 +206,82 @@ func TestDeleteGetRemovalOfAnUnknownIdIs404(t *testing.T) {
 		if w.Code != http.StatusNotFound || w.Body.String() != `{"error":"removal not found"}` {
 			t.Errorf("%s: status = %d, body %s", id, w.Code, w.Body)
 		}
+	}
+}
+
+// A removal is polled at /api/v1/removals and never appears under
+// /api/v1/deploys: the pack's deploy calls and the golden corpus must not see
+// it (D-20, PD-21).
+func TestDeploysListExcludesRemovals(t *testing.T) {
+	g := newEnvRig(t, nil)
+	store := g.runner.Store()
+	now := time.Now().UTC()
+	mk := func(i int, kind string) jobs.Job {
+		created := now.Add(time.Duration(i) * time.Second)
+		return jobs.Job{
+			ID: fmt.Sprintf("%032x", i+1), Engine: "r10k", Kind: kind, State: jobs.StateDeployed,
+			CreatedAt: created, StartedAt: &created, FinishedAt: &created,
+			Results: []jobs.EnvResult{{Environment: "production", State: jobs.StateDeployed}},
+		}
+	}
+	var deployIDs, removalIDs []string
+	for i := 0; i < 5; i++ {
+		kind := ""
+		if i == 1 || i == 2 || i == 4 {
+			kind = jobs.KindRemove
+		}
+		j := mk(i, kind)
+		if err := store.Save(j); err != nil {
+			t.Fatal(err)
+		}
+		if kind == "" {
+			deployIDs = append(deployIDs, j.ID)
+		} else {
+			removalIDs = append(removalIDs, j.ID)
+		}
+	}
+
+	w := g.do(http.MethodGet, "/api/v1/deploys?limit=20")
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, body %s", w.Code, w.Body)
+	}
+	var body struct {
+		Deploys []struct {
+			ID   string `json:"id"`
+			Kind string `json:"kind"`
+		} `json:"deploys"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+	if len(body.Deploys) != 2 {
+		t.Fatalf("listed %d records, want exactly the 2 deploys: %s", len(body.Deploys), w.Body)
+	}
+	for _, d := range body.Deploys {
+		if d.Kind != "" || (d.ID != deployIDs[0] && d.ID != deployIDs[1]) {
+			t.Errorf("listed %+v, want only deploys %v", d, deployIDs)
+		}
+	}
+	// limit counts deploys, not records of every kind.
+	w = g.do(http.MethodGet, "/api/v1/deploys?limit=2")
+	if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil || len(body.Deploys) != 2 {
+		t.Fatalf("limit=2 listed %d: %s", len(body.Deploys), w.Body)
+	}
+
+	for _, id := range removalIDs {
+		w := g.do(http.MethodGet, "/api/v1/deploys/"+id)
+		if w.Code != http.StatusNotFound || w.Body.String() != `{"error":"deploy not found"}` {
+			t.Errorf("GET deploys/%s: status = %d, body %s", id, w.Code, w.Body)
+		}
+		if w := g.do(http.MethodGet, "/api/v1/removals/"+id); w.Code != http.StatusOK {
+			t.Errorf("GET removals/%s: status = %d, body %s", id, w.Code, w.Body)
+		}
+	}
+	// And the other way round: a deploy id is not a removal.
+	if w := g.do(http.MethodGet, "/api/v1/removals/"+deployIDs[0]); w.Code != http.StatusNotFound || w.Body.String() != `{"error":"removal not found"}` {
+		t.Errorf("GET removals/<deploy id>: status = %d, body %s", w.Code, w.Body)
+	}
+	if w := g.do(http.MethodGet, "/api/v1/deploys/"+deployIDs[0]); w.Code != http.StatusOK {
+		t.Errorf("GET deploys/<deploy id>: status = %d", w.Code)
 	}
 }
