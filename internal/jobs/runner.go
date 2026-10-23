@@ -287,7 +287,9 @@ func (r *Runner) Refuse(job Job, reason error) (Job, error) {
 
 // Run deploys every environment of job in order, one engine invocation each,
 // saving progress to the store as it goes, and returns the finished job. The
-// job is failed unless every environment was deployed.
+// job is failed unless every environment was deployed. A job of Kind
+// KindRemove removes its environment instead of deploying it, under the same
+// lock (D-09).
 func (r *Runner) Run(ctx context.Context, job Job) (Job, error) {
 	// The job stays queued while it waits for the lock. The lock is held
 	// around every engine invocation of the job, environments in request
@@ -320,7 +322,11 @@ func (r *Runner) Run(ctx context.Context, job Job) (Job, error) {
 		}
 		job.Results[i].State = StateDeploying
 		_ = r.opts.Store.Save(job)
-		job.Results[i] = r.deployOne(ctx, job.Results[i])
+		if job.Kind == KindRemove {
+			job.Results[i] = r.removeOne(ctx, job.Results[i], job.ID)
+		} else {
+			job.Results[i] = r.deployOne(ctx, job.Results[i])
+		}
 		if job.Results[i].State != StateDeployed {
 			all = false
 		}

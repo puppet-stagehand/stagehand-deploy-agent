@@ -25,6 +25,8 @@ type Options struct {
 	Addr   string
 	TLS    TLSConfig
 	Runner *jobs.Runner
+	// ProtectedEnvironments are never removed by DELETE (deploys.protected_environments, D-10).
+	ProtectedEnvironments []string
 	// Store is the runner's file store, closed by Serve as its last step so
 	// the instance lock file does not outlive the process (FORK-WR-03). Nil
 	// means nothing to close.
@@ -51,7 +53,7 @@ func New(o Options) (*Server, error) {
 	if log == nil {
 		log = slog.Default()
 	}
-	srv, err := NewMTLSServer(o.Addr, o.TLS, NewMux(NewDeployHandlers(o.Runner, log), nil), log)
+	srv, err := NewMTLSServer(o.Addr, o.TLS, NewMux(NewDeployHandlers(o.Runner, log), NewEnvironmentHandlers(o.Runner, o.ProtectedEnvironments, log)), log)
 	if err != nil {
 		return nil, err
 	}
@@ -107,6 +109,8 @@ func OptionsFromConfig(ctx context.Context, cfg *config.Config, log *slog.Logger
 		Runner: runner,
 		Store:  store,
 		Logger: log,
+
+		ProtectedEnvironments: cfg.Deploys.ProtectedEnvironments,
 	}, nil
 }
 
